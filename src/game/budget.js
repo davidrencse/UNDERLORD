@@ -31,21 +31,24 @@ export function createBudget(n, observed = {}) {
   const prosperous = perCapita > 30000;
   const total = totalFromWatchTower(wt.spending?.total) ?? (prosperous ? 38 : 30);
   const migrantShare = wt.migrantStock && n.pop > 0 ? wt.migrantStock / (n.pop * 1e6) : 0;
+  const incomeScale = Math.min(1, Math.max(0, perCapita / 65000));
+  const migrationScale = Math.min(0.25, migrantShare);
+  const sizeScale = Math.min(1, Math.max(0, Math.log10(Math.max(1, n.gdp)) / 4));
   const estimate = (value) => ({ value: round(value), source: 'Game estimate' });
   const lines = {
-    policy: estimate(prosperous ? 0.8 : 0.55),
+    policy: estimate(0.4 + total * 0.006 + incomeScale * 0.18),
     education: measured(observed.education, 4),
     military: measured(observed.military, n.defPct),
-    administration: estimate(round(1.8 + total * 0.018)),
-    infrastructure: estimate(prosperous ? 2.8 : 3.6),
+    administration: estimate(1.25 + total * 0.034),
+    infrastructure: estimate(4.3 - incomeScale * 1.7 + total * 0.006),
     health: measured(observed.health, prosperous ? 5.5 : 2.5),
     pensions: measured(observed.pensions, prosperous ? 7 : 3),
-    border: estimate(n.iso3 === 'UKR' ? 1.1 : migrantShare > 0.1 ? 0.6 : 0.35),
-    foreignAid: estimate(prosperous ? (n.iso3 === 'USA' ? 0.2 : 0.35) : 0.08),
-    un: estimate(prosperous ? 0.006 : 0.002),
-    immigrantAssistance: estimate(migrantShare > 0.1 ? 0.3 : 0.1),
-    publicSafety: estimate(prosperous ? 1.8 : 1.5),
-    housing: estimate(prosperous ? 1.2 : 0.6),
+    border: estimate(0.2 + migrationScale * 2 + (n.iso3 === 'UKR' ? 0.8 : 0)),
+    foreignAid: estimate(0.04 + incomeScale * 0.35 + sizeScale * 0.06),
+    un: estimate(0.001 + incomeScale * 0.004 + sizeScale * 0.002),
+    immigrantAssistance: estimate(0.04 + migrationScale * 1.6 + incomeScale * 0.03),
+    publicSafety: estimate(1.05 + total * 0.017 + migrationScale * 0.3),
+    housing: estimate(0.35 + total * 0.012 + incomeScale * 0.35),
   };
   n.defPct = lines.military.value;
   const baseline = Object.fromEntries(Object.entries(lines).map(([id, line]) => [id, line.value]));

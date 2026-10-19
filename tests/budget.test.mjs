@@ -25,6 +25,8 @@ test('countries start with distinct observed allocations and marked estimates', 
   assert.equal(us.budget.lines.education.value, 5.42);
   assert.equal(italy.budget.lines.pensions.value, 16.1);
   assert.notEqual(us.budget.lines.military.value, italy.budget.lines.military.value);
+  assert.notEqual(us.budget.lines.administration.value, italy.budget.lines.administration.value);
+  assert.notEqual(us.budget.lines.foreignAid.value, italy.budget.lines.foreignAid.value);
   assert.equal(us.budget.lines.border.source, 'Game estimate');
   assert.equal(budgetDelta(us.budget), 0);
 });
