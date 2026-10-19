@@ -220,7 +220,7 @@ export class Overlay {
         const n = this.ctx.game.nations[s.owner];
         rec.el.className = `unit ${relCls}${sel ? ' sel' : ''}${compact ? ' compact' : ''}${s.battle ? ' battle' : ''}${tags ? ' tagged' : ''}`;
         rec.el.title = members.length > 1 ? `${n.name}: ${members.length} formations, ${divs} divisions` : `${n.name}: ${s.name}`;
-        const count = TYPES[s.type].domain === 'land' ? divs : members.length > 1 ? members.length : '';
+        const count = TYPES[s.type].domain === 'land' ? (s.divs < 1 ? members.length > 1 ? members.length : 'B' : divs) : members.length > 1 ? members.length : '';
         rec.el.innerHTML = `<span class="tag">${esc(n.iso3)}</span>${svg(s.type)}<span class="n">${count}</span><span class="bar"><i style="width:${Math.round(strength * 100)}%"></i></span>`;
       }
       const x = Math.round(it.x), y = Math.round(it.y);

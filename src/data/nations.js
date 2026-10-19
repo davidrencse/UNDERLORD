@@ -4,14 +4,14 @@
 // army: active k, MBT, combat aircraft, carriers, submarines, major surface ships, warheads | spirits
 // Ideology codes: dem democratic, nat nationalist, aut autocratic, com communist, the theocratic.
 const RAW = `
-840|USA|United States|Donald Trump|President|Federal presidential republic|nat|29180|340|62|44|121|2.8|3.4|38.90,-77.04|NATO|UN-P5 G7 G20 QUAD AUKUS|1328,4640,2750,11,66,110,5044|reserve_currency america_first polarization
-156|CHN|China|Xi Jinping|General Secretary|One-party socialist state|com|18750|1409|74|52|88|5.0|1.7|39.90,116.40||UN-P5 BRICS SCO G20|2035,4950,2100,3,60,140,600|made_in_china property_crisis great_firewall
-643|RUS|Russia|Vladimir Putin|President|Authoritarian federal republic|aut|2160|144|58|61|20|3.6|6.3|55.75,37.62|CSTO|UN-P5 BRICS SCO G20 CIS|1320,2000,1180,1,60,75,5580|war_economy western_sanctions silovik_state
-356|IND|India|Narendra Modi|Prime Minister|Federal parliamentary republic|nat|3890|1451|68|40|83|6.5|2.4|28.61,77.21||BRICS SCO G20 QUAD|1475,4200,600,2,17,30,172|demographic_dividend strategic_autonomy
-826|GBR|United Kingdom|Keir Starmer|Prime Minister|Constitutional monarchy|dem|3640|69|60|38|101|1.1|2.3|51.51,-0.13|NATO|UN-P5 G7 G20 AUKUS|138,213,140,2,10,17,225|city_of_london post_brexit
-250|FRA|France|Emmanuel Macron|President|Semi-presidential republic|dem|3160|68|50|36|113|1.1|2.1|48.86,2.35|NATO|UN-P5 EU G7 G20|203,215,225,1,9,22,290|force_de_frappe hung_parliament
-276|DEU|Germany|Olaf Scholz|Chancellor|Federal parliamentary republic|dem|4710|84|52|30|63|0.0|2.1|52.52,13.40|NATO|EU G7 G20|181,300,225,0,6,11,0|zeitenwende industrial_stagnation debt_brake coalition_collapse
-392|JPN|Japan|Shigeru Ishiba|Prime Minister|Constitutional monarchy|dem|4070|124|70|26|236|0.4|1.6|35.68,139.69||G7 G20 QUAD|247,500,300,0,24,50,0|article_9 aging_society
+840|USA|United States|Donald Trump|President|Federal presidential republic|nat|29180|340|62|44|121|2.8|3.4|38.90,-77.04|NATO|UN-P5 G7 G20 QUAD AUKUS|1328,4640,2750,11,66,110,5044|reserve_currency america_first polarization constitutional_checks tech_giants
+156|CHN|China|Xi Jinping|General Secretary|One-party socialist state|com|18750|1409|74|52|88|5.0|1.7|39.90,116.40||UN-P5 BRICS SCO G20|2035,4950,2100,3,60,140,600|made_in_china property_crisis great_firewall party_state export_dependency
+643|RUS|Russia|Vladimir Putin|President|Authoritarian federal republic|aut|2160|144|58|61|20|3.6|6.3|55.75,37.62|CSTO|UN-P5 BRICS SCO G20 CIS|1320,2000,1180,1,60,75,5580|war_economy western_sanctions silovik_state security_vertical battlefield_attrition
+356|IND|India|Narendra Modi|Prime Minister|Federal parliamentary republic|nat|3890|1451|68|40|83|6.5|2.4|28.61,77.21||BRICS SCO G20 QUAD|1475,4200,600,2,17,30,172|demographic_dividend strategic_autonomy coalition_federalism digital_public_goods
+826|GBR|United Kingdom|Keir Starmer|Prime Minister|Constitutional monarchy|dem|3640|69|60|38|101|1.1|2.3|51.51,-0.13|NATO|UN-P5 G7 G20 AUKUS|138,213,140,2,10,17,225|city_of_london post_brexit parliamentary_mandate regional_divide
+250|FRA|France|Emmanuel Macron|President|Semi-presidential republic|dem|3160|68|50|36|113|1.1|2.1|48.86,2.35|NATO|UN-P5 EU G7 G20|203,215,225,1,9,22,290|force_de_frappe hung_parliament republican_street administrative_state
+276|DEU|Germany|Olaf Scholz|Chancellor|Federal parliamentary republic|dem|4710|84|52|30|63|0.0|2.1|52.52,13.40|NATO|EU G7 G20|181,300,225,0,6,11,0|zeitenwende industrial_stagnation debt_brake coalition_collapse export_engine federal_vetoes
+392|JPN|Japan|Shigeru Ishiba|Prime Minister|Constitutional monarchy|dem|4070|124|70|26|236|0.4|1.6|35.68,139.69||G7 G20 QUAD|247,500,300,0,24,50,0|article_9 aging_society industrial_policy island_supply_lines
 380|ITA|Italy|Giorgia Meloni|Prime Minister|Parliamentary republic|nat|2370|59|58|30|135|0.7|1.5|41.90,12.50|NATO|EU G7 G20|165,200,200,2,8,18,0|
 124|CAN|Canada|Justin Trudeau|Prime Minister|Constitutional monarchy|dem|2240|41|52|30|107|1.5|1.4|45.42,-75.70|NATO|G7 G20|68,80,85,0,4,12,0|
 076|BRA|Brazil|Luiz Inácio Lula da Silva|President|Federal presidential republic|dem|2170|212|50|22|87|3.2|1.1|-15.79,-47.88||BRICS G20|360,390,110,0,6,9,0|
@@ -21,7 +21,7 @@ const RAW = `
 484|MEX|Mexico|Claudia Sheinbaum|President|Federal presidential republic|dem|1850|131|48|18|58|1.2|0.7|19.43,-99.13||G20|280,0,30,0,0,8,0|cartel_violence nearshoring
 360|IDN|Indonesia|Prabowo Subianto|President|Presidential republic|nat|1400|283|60|35|40|5.0|0.8|-6.21,106.85||BRICS G20 ASEAN|400,330,100,0,4,7,0|
 528|NLD|Netherlands|Dick Schoof|Prime Minister|Constitutional monarchy|dem|1230|18|58|30|44|0.9|2.0|52.37,4.90|NATO|EU|41,18,40,0,4,6,0|
-792|TUR|Turkey|Recep Tayyip Erdoğan|President|Presidential republic|nat|1320|87|52|48|26|3.2|2.1|39.93,32.86|NATO|G20|355,2200,300,0,12,16,0|inflation_crisis bosphorus_gate
+792|TUR|Turkey|Recep Tayyip Erdoğan|President|Presidential republic|nat|1320|87|52|48|26|3.2|2.1|39.93,32.86|NATO|G20|355,2200,300,0,12,16,0|inflation_crisis bosphorus_gate presidential_system currency_pressure
 682|SAU|Saudi Arabia|Mohammed bin Salman|Crown Prince|Absolute monarchy|aut|1100|34|70|40|26|1.3|7.1|24.71,46.68||G20 GCC OPEC|257,1000,270,0,0,11,0|vision_2030 oil_economy
 756|CHE|Switzerland|Karin Keller-Sutter|President of the Confederation|Federal directorial republic|dem|940|9|85|15|38|1.3|0.7|46.95,7.45|||20,134,55,0,0,0,0|armed_neutrality
 616|POL|Poland|Donald Tusk|Prime Minister|Parliamentary republic|dem|910|37|62|58|55|2.9|4.1|52.23,21.01|NATO|EU|216,800,100,0,1,2,0|eastern_flank

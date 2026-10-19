@@ -3,6 +3,7 @@ import { SPIRITS, POWER_CENTRE_TYPES } from '../data/politics.js';
 import { CRISES } from '../game/crises.js';
 import { money, pct, signed, int, esc, flagHTML, fxText, day, compact, usd } from './format.js';
 import { spiritRows, partyBar, IDEO_TONE } from './panels.js';
+import { politicalPressure } from '../game/politicalSystems.js';
 
 const fig = (k, v, s = '') => `<div><div class="k">${k}</div><div class="v${v == null ? ' missing' : ''}">${v ?? 'Not available'}</div>${s ? `<div class="s">${s}</div>` : ''}</div>`;
 
@@ -33,6 +34,7 @@ export class DossierScreen {
     const a = n.army ?? {};
     const perCap = (n.gdp * 1e9) / (n.pop * 1e6);
     const list = [...n.politics.list].sort((x, y) => y.share - x.share);
+    const pressure = politicalPressure(n);
     const tot = list.reduce((s, p) => s + p.share, 0);
     const others = game.live().filter((o) => o !== n);
     const ranked = others.map((o) => [o, game.opinion(n.index, o.index)]).sort((x, y) => y[1] - x[1]);
@@ -58,10 +60,11 @@ export class DossierScreen {
         </div>
 
         <div class="dgrid">
-          <section class="c7"><h2>Government <em>${n.politics.next ? `next election ${day(Date.parse(n.politics.next))}` : 'no scheduled election'}</em></h2>
+          <section class="c7"><h2>Government <em>${n.politics.next ? `next election ${day(Date.parse(n.politics.next))}` : n.politics.congress ? `next Party Congress ${day(Date.parse(n.politics.congress))}` : 'no scheduled election'}</em></h2>
             <dl class="kv">
               <dt>Head of government</dt><dd>${esc(w.headOfGovernment ?? `${n.leader}${n.title ? `, ${n.title}` : ''}`)}</dd>
               <dt>System</dt><dd>${esc(n.gov)}</dd>
+              <dt>${esc(pressure.name)}</dt><dd>${pressure.value.toFixed(0)} / 100 (${signed(pressure.pp, 2)} political power/day)</dd>
               ${w.legislature ? `<dt>Legislature</dt><dd>${esc(w.legislature)}</dd>` : ''}
               ${w.lastElection ? `<dt>Last election</dt><dd>${esc(w.lastElection)}</dd>` : ''}
             </dl>
@@ -138,114 +141,7 @@ export class DossierScreen {
 }
 
 // ------------------------------------------------------------------------------- Focus tree
-function focusFx(fx = {}) {
-  const out = [];
-  if (fx.pp) out.push(`${signed(fx.pp, 0)} political power`);
-  if (fx.stab) out.push(`${signed(fx.stab, 0)}% stability`);
-  if (fx.ws) out.push(`${signed(fx.ws, 0)}% war support`);
-  if (fx.growth) out.push(`${signed(fx.growth)} pts GDP growth`);
-  if (fx.debt) out.push(`${signed(fx.debt, 0)} pts debt`);
-  if (fx.defPct) out.push(`${signed(fx.defPct)}% of GDP to defence`);
-  if (fx.divisions) out.push(`${fx.divisions} new division${fx.divisions > 1 ? 's' : ''}`);
-  if (fx.airWings) out.push('New air wing');
-  if (fx.fleets) out.push('New squadron');
-  if (fx.spirit) out.push(`Gain “${SPIRITS[fx.spirit]?.name}”`);
-  if (fx.remove) out.push(`Remove “${SPIRITS[fx.remove]?.name}”`);
-  if (fx.leader) out.push(`${fx.leader[0]} becomes ${fx.leader[1]}`);
-  if (fx.ideo) out.push(`Government becomes ${IDEOLOGIES[fx.ideo].name.toLowerCase()}`);
-  if (fx.gov) out.push(`System: ${fx.gov}`);
-  if (fx.blocLeave) out.push(`Leave the ${BLOCS[fx.blocLeave]}`);
-  for (const [k, v] of Object.entries(fx.loyalty ?? {})) out.push(`${signed(v, 0)} loyalty: ${POWER_CENTRE_TYPES[k].toLowerCase()}`);
-  for (const [k, v] of Object.entries(fx.party ?? {})) out.push(`${signed(v, 0)} pts ${k}`);
-  return out;
-}
-
-export class FocusScreen {
-  constructor(root, ctx) {
-    this.ctx = ctx;
-    this.el = document.createElement('div');
-    this.el.className = 'screen';
-    this.el.hidden = true;
-    root.appendChild(this.el);
-    this.el.addEventListener('click', (e) => {
-      if (e.target.closest('[data-x]')) { this.close(); return; }
-      const f = e.target.closest('[data-focus]');
-      if (!f) return;
-      const { game } = this.ctx;
-      const n = game.nations[game.player];
-      this.detail = f.dataset.focus;
-      if (game.startFocus(n, f.dataset.focus)) game.log(`${n.name} begins “${game.tree(n).focuses.find((x) => x.id === f.dataset.focus).name}”.`, { nation: n.index, kind: 'focus' });
-      this.render();
-    });
-    this.el.addEventListener('mouseover', (e) => {
-      const f = e.target.closest('[data-focus]');
-      if (f && f.dataset.focus !== this.detail) { this.detail = f.dataset.focus; this._detail(); }
-    });
-  }
-  close() { this.el.hidden = true; }
-  open() { this.el.hidden = false; this._html = null; this.render(); }
-
-  render() {
-    if (this.el.hidden) return;
-    const { game } = this.ctx;
-    const n = game.nations[game.player];
-    const tree = game.tree(n);
-    const X = 178, Y = 112;
-    const maxX = Math.max(...tree.focuses.map((f) => f.x)), maxY = Math.max(...tree.focuses.map((f) => f.y));
-    const byId = new Map(tree.focuses.map((f) => [f.id, f]));
-    const links = [];
-    for (const f of tree.focuses) for (const r of f.req ?? []) {
-      const p = byId.get(r);
-      if (!p) continue;
-      const x1 = p.x * X + 75, y1 = p.y * Y + 64, x2 = f.x * X + 75, y2 = f.y * Y;
-      links.push(`<path d="M${x1} ${y1} V${(y1 + y2) / 2} H${x2} V${y2}" stroke="${n.focus.done.has(r) ? '#e8e8e8' : 'rgba(255,255,255,0.25)'}" fill="none" ${f.reqAll ? '' : 'stroke-dasharray="3 3"'}/>`);
-    }
-    for (const f of tree.focuses) for (const m of f.mutex ?? []) {
-      const o = byId.get(m);
-      if (o && o.y === f.y && o.x > f.x) links.push(`<path d="M${f.x * X + 150} ${f.y * Y + 32} H${o.x * X}" stroke="rgba(255,68,51,0.5)" stroke-dasharray="2 4"/>`);
-    }
-    const cur = n.focus.current;
-    const html = `
-      <button class="btn x" data-x>Close <span class="num">Esc</span></button>
-      <div class="wrap wide">
-        <div class="tree-head">
-          <div><div style="color:var(--quiet)">${esc(n.name)}</div><h1>${esc(tree.title)}</h1></div>
-          <div style="text-align:right;color:var(--quiet)">${cur ? `Pursuing <b style="color:var(--ink)">${esc(byId.get(cur.id).name)}</b>, ${byId.get(cur.id).days - cur.progress} days left` : 'No focus selected. Choose an available one.'}<br><span class="num">${n.focus.done.size}/${tree.focuses.length} complete</span></div>
-        </div>
-        <div class="tree" style="width:${maxX * X + 150}px;height:${maxY * Y + 70}px">
-          <svg class="links" width="${maxX * X + 150}" height="${maxY * Y + 70}">${links.join('')}</svg>
-          ${tree.focuses.map((f) => {
-            const st = game.focusState(n, f);
-            const prog = cur?.id === f.id ? `<span class="prog" style="width:${(cur.progress / f.days) * 100}%"></span>` : '';
-            return `<button class="focus ${st}" data-focus="${f.id}" style="left:${f.x * X}px;top:${f.y * Y}px" ${st === 'available' || st === 'active' || st === 'done' ? '' : 'aria-disabled="true"'}><b>${esc(f.name)}</b><small>${f.days} days${st === 'blocked' ? ', excluded' : ''}</small>${prog}</button>`;
-          }).join('')}
-        </div>
-        <div class="focus-detail"></div>
-      </div>`;
-    // Re-rendered on every game day while open; most days change nothing in the tree.
-    if (html !== this._html) {
-      this._html = html;
-      this._detailHtml = null;
-      this.el.innerHTML = html;
-    }
-    this._detail();
-  }
-
-  _detail() {
-    const { game } = this.ctx;
-    const n = game.nations[game.player];
-    const f = game.tree(n).focuses.find((x) => x.id === this.detail) ?? game.tree(n).focuses[0];
-    const box = this.el.querySelector('.focus-detail');
-    if (!box) return;
-    const st = game.focusState(n, f);
-    const hint = { available: n.focus.current ? 'Finish the current focus first.' : 'Click to begin.', active: 'In progress.', done: 'Completed.', locked: 'Requires an earlier focus.', blocked: 'Excluded by a rival path.' }[st];
-    const html = `<b style="font:600 20px var(--display);letter-spacing:.06em;text-transform:uppercase">${esc(f.name)}</b> <span class="num" style="color:var(--quiet)">${f.days} days</span><p style="margin:6px 0;max-width:80ch;color:#cfd1d3">${esc(f.desc)}</p><div class="fx" style="font:400 11px var(--mono);color:var(--quiet)">${focusFx(f.fx).join(', ') || 'No direct effects.'}</div><p class="note">${hint}</p>`;
-    if (html === this._detailHtml && box === this._detailBox) return;
-    this._detailHtml = html;
-    this._detailBox = box;
-    box.innerHTML = html;
-  }
-}
+export { FocusScreen } from './focusScreen.js';
 
 // ------------------------------------------------------------------------------- Events
 export class EventModal {
@@ -290,7 +186,7 @@ export class EventModal {
 }
 
 // ------------------------------------------------------------------------------- Start
-export const MAJORS = ['USA', 'CHN', 'RUS', 'DEU', 'FRA', 'GBR', 'IND', 'TUR'];
+export const MAJORS = ['USA', 'CHN', 'RUS', 'DEU', 'FRA', 'GBR', 'JPN', 'IND', 'TUR'];
 const SITUATION = {
   USA: 'A new administration, tariffs and a polarised country.',
   CHN: 'Slowing growth, a property bust and Taiwan.',
@@ -298,6 +194,7 @@ const SITUATION = {
   DEU: 'The coalition has collapsed. A snap election in five weeks.',
   FRA: 'A hung parliament and a minority government on borrowed time.',
   GBR: 'A huge majority on a third of the vote. Reform is surging.',
+  JPN: 'A minority cabinet weighs economic renewal against Pacific security.',
   IND: 'The fastest-growing major economy, courted by every bloc.',
   TUR: 'Inflation, the Straits and a seat at every table.',
 };
@@ -337,7 +234,7 @@ export class StartScreen {
       </div>
       <div class="pick">
         <h2>Choose a nation</h2>
-        <p>The eight major campaigns have their own politics and power centres. Every other nation is playable too: click it on the globe.</p>
+        <p>The nine major campaigns have their own politics and power centres. Every other nation is playable too: click it on the globe.</p>
         <div class="majors">${majors.map((n) => `<button class="major ${this.choice === n.index ? 'on' : ''}" data-iso="${n.iso3}">${flagHTML(n)}<span><b>${esc(n.name)}</b><small>${esc(SITUATION[n.iso3] ?? '')}</small></span><span class="gdp">${money(n.gdp)}</span></button>`).join('')}</div>
         ${c ? `<div class="chosen">
           <h3>${esc(c.name)}</h3>

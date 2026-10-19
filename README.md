@@ -13,20 +13,23 @@ npm run dev        # http://localhost:5199
 
 | Input | Action |
 |---|---|
-| Left-drag, WASD | Pan |
+| Left-drag | Select your formations in a box; Shift adds to selection |
+| Middle-drag, Space + left-drag, WASD | Pan |
 | Wheel, R / F | Zoom (towards the cursor) |
 | Right-drag, Q / E | Rotate and tilt |
 | Click a nation | Open its panel |
 | Click a counter, shift-click | Select formations |
-| Right-click | Move the selected formations; on an enemy counter, attack it |
+| Right-click a country | Open diplomatic decisions for that country |
+| Right-click with formations selected | Move them; on an enemy counter, attack it. Shift + right-click opens country decisions |
 | Space, 1–5 | Pause, game speed |
-| O / T | Country overview / national trajectory |
+| O / T / L | Country overview / national trajectory / your country ledger |
 | N | Toggle the day/night terminator |
 | Esc | Close the current screen |
 
 ## Layout
 
-- `src/data/`: starting conditions (nations, leaders, parties, power centres, spirits, focus trees, cities, naval bases)
+- `src/data/`: starting conditions (nations, leaders, parties, power centres, spirits, focus trees, cities, naval bases). The seven major campaign trees continue in `majorFocuses.js` and `majorFocusesMore.js`.
+- `docs/focus-tree-research.md`: sources and adaptation notes for the seven major-country focus trees
 - `src/world/`: globe shader, sovereignty raster, camera, city-level layer
 - `src/game/`: simulation (economy, politics, elections, crisis engine, diplomacy, units, combat, occupation)
 - `src/ui/`: HUD, panels, overview, focus tree, events, start screen
@@ -54,6 +57,8 @@ Below about 80 km altitude, every nearby formation appears as its full table of 
 
 Models are built in code (`src/world/unitModels.js`) in Western, Russian/Soviet and Chinese variants. Unit cards list real equipment counts and names (M1A2 Abrams, T-90M, Type 99A, Leopard 2A7V and so on).
 
+Eight major countries (USA, China, Russia, India, Britain, France, Germany and Japan) also start with 108 additional battalion-sized formations each. Their broad garrison regions are in `src/data/garrisons.js`. Public army station and unit maps anchor the US, UK, France, Germany and Japan; other regions are estimates. Every generated position is dispersed and checked against the game's control map. These are game formations, not claims about the precise location of real units.
+
 ## WatchTower data
 
 `public/data/watchtower.json` and `public/flags/` come from the WatchTower project:
@@ -63,4 +68,6 @@ node scripts/import-watchtower.mjs C:/Users/david/Desktop/WatchTower
 ```
 
 That data is the World Bank economy and society baseline, Trading Economics rates, Global Firepower inventories, party estimates, and the DeepState-derived control map of occupied Ukraine. Some of it dates from 2026, so it is newer than the January 2025 start.
+
+The player's ledger adds editable annual funding lines and bond decisions. Its compact country baselines live in `public/data/budget-baselines.json`; `node scripts/import-budget-baselines.mjs` refreshes the published World Bank observations. Sources, date limits, and estimated categories are documented in `docs/budget-research.md`.
 "# UNDERLORD" 

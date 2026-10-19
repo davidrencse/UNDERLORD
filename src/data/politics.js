@@ -1,7 +1,27 @@
 // National spirits, parties, power centres and national trajectories (focus trees).
+import { MAJOR_FOCUS_EXPANSIONS, JAPAN_FOCUS_TREE } from './majorFocuses.js';
+import { MORE_MAJOR_FOCUSES } from './majorFocusesMore.js';
 
 // Effects: pp = political power/day, stab/ws = target points, growth = GDP growth pts, infl = inflation pts.
 export const SPIRITS = {
+  constitutional_checks: { name: 'Constitutional checks', desc: 'Courts, Congress and state governments contest executive power.', fx: { stab: 2, pp: -0.2 } },
+  tech_giants: { name: 'Tech giants', desc: 'Platform firms and AI labs drive investment while concentrating economic power.', fx: { growth: 0.4, stab: -2 } },
+  party_state: { name: 'Party-state apparatus', desc: 'Cadre networks bind local government to central priorities.', fx: { stab: 4, pp: 0.25 } },
+  export_dependency: { name: 'Export dependency', desc: 'Industrial output depends on access to overseas consumers.', fx: { growth: 0.25, stab: -2 } },
+  security_vertical: { name: 'Power vertical', desc: 'Centralized appointments and security agencies keep regional elites in line.', fx: { pp: 0.3, stab: 2 } },
+  battlefield_attrition: { name: 'Battlefield attrition', desc: 'Sustained war losses strain manpower, budgets and public patience.', fx: { growth: -0.4, ws: -4 } },
+  parliamentary_mandate: { name: 'Parliamentary mandate', desc: 'A large Commons majority makes legislation easier to pass.', fx: { pp: 0.25, stab: 1 } },
+  regional_divide: { name: 'Regional divide', desc: 'Uneven prosperity sharpens tensions between regions and London.', fx: { stab: -3 } },
+  republican_street: { name: 'Politics in the streets', desc: 'Unions and protest movements can block reform outside parliament.', fx: { stab: -3, pp: -0.15 } },
+  administrative_state: { name: 'Administrative state', desc: 'A powerful civil service can carry policy through fragile cabinets.', fx: { pp: 0.15, stab: 1 } },
+  export_engine: { name: 'Export engine', desc: 'Manufacturing clusters anchor European supply chains.', fx: { growth: 0.3 } },
+  federal_vetoes: { name: 'Federal vetoes', desc: 'Coalition partners and state governments slow national reforms.', fx: { pp: -0.2, stab: 1 } },
+  industrial_policy: { name: 'Industrial policy revival', desc: 'Subsidies and procurement steer investment into strategic sectors.', fx: { growth: 0.25, pp: -0.1 } },
+  island_supply_lines: { name: 'Island supply lines', desc: 'Imported fuel and raw materials expose the economy to shocks.', fx: { growth: -0.2, ws: 2 } },
+  coalition_federalism: { name: 'Coalition federalism', desc: 'Regional allies and state leaders bargain over national policy.', fx: { stab: 2, pp: -0.2 } },
+  digital_public_goods: { name: 'Digital public infrastructure', desc: 'Digital identity and payments extend state capacity.', fx: { growth: 0.3, pp: 0.15 } },
+  presidential_system: { name: 'Presidential system', desc: 'A strong executive can act quickly but must manage institutional rivals.', fx: { pp: 0.2, stab: -1 } },
+  currency_pressure: { name: 'Currency pressure', desc: 'External financing needs magnify inflation and confidence shocks.', fx: { infl: 2, growth: -0.2 } },
   reserve_currency: { name: 'Reserve currency', desc: 'The dollar underwrites world trade and cheap borrowing.', fx: { growth: 0.4, pp: 0.3 } },
   america_first: { name: 'America First', desc: 'Tariffs and transactional alliances unsettle partners.', fx: { pp: 0.4, growth: -0.2, ws: 4 } },
   polarization: { name: 'Polarised electorate', desc: 'Two camps that no longer accept each other as legitimate.', fx: { stab: -6 } },
@@ -135,6 +155,15 @@ export const PARTIES = {
     { id: 'GRN', name: 'Greens', ideo: 'dem', share: 9, note: 'Environmentalist left' },
     { id: 'SNP', name: 'SNP', ideo: 'dem', share: 3, note: 'Scottish independence' },
   ] },
+  JPN: { ruling: ['LDP', 'KOM'], next: '2028-10-01', list: [
+    { id: 'LDP', name: 'Liberal Democratic Party', ideo: 'dem', share: 38, note: 'Conservative party leading a minority government' },
+    { id: 'CDP', name: 'Constitutional Democratic Party', ideo: 'dem', share: 21, note: 'Main centre-left opposition' },
+    { id: 'DPP', name: 'Democratic Party for the People', ideo: 'dem', share: 11, note: 'Centrist swing votes on tax and energy policy' },
+    { id: 'ISH', name: 'Japan Innovation Party', ideo: 'dem', share: 9, note: 'Reformist opposition with a strong Osaka base' },
+    { id: 'KOM', name: 'Komeito', ideo: 'dem', share: 8, note: 'Junior coalition partner and cautious voice on defence' },
+    { id: 'JCP', name: 'Japanese Communist Party', ideo: 'com', share: 5, note: 'Pacifist left opposition' },
+    { id: 'OTH', name: 'Other parties', ideo: 'dem', share: 8, note: 'Smaller parties and independents' },
+  ] },
   IND: { ruling: ['BJP'], next: '2029-05-01', list: [
     { id: 'BJP', name: 'Bharatiya Janata Party', ideo: 'nat', share: 37, note: 'Hindu nationalist; leads the NDA coalition' },
     { id: 'INC', name: 'Indian National Congress', ideo: 'dem', share: 21, note: 'Centre-left; leads the INDIA bloc' },
@@ -167,6 +196,7 @@ export const POWER_CENTRES = {
   DEU: [['business', 'Industry (DAX & Mittelstand)', 26, 48], ['labor', 'IG Metall & unions', 16, 52], ['military', 'Bundeswehr', 8, 55], ['security', 'BND & Verfassungsschutz', 6, 62], ['regions', 'Länder (eastern states)', 16, 34], ['media', 'Public broadcasters & press', 14, 55], ['clergy', 'Churches', 6, 50], ['movement', 'Climate movement', 8, 40]],
   FRA: [['business', 'CAC 40 groups', 22, 55], ['labor', 'CGT & unions', 18, 30], ['military', 'Armed forces', 12, 62], ['security', 'DGSE & DGSI', 8, 60], ['media', 'Media groups', 14, 45], ['regions', 'Overseas & Corsica', 8, 38], ['movement', 'Gilets jaunes & street movements', 10, 20], ['clergy', 'Catholic Church', 8, 40]],
   GBR: [['business', 'City of London', 26, 60], ['labor', 'Trade unions', 16, 72], ['military', 'Armed forces', 10, 58], ['security', 'MI5 & MI6', 8, 66], ['media', 'Fleet Street', 18, 36], ['regions', 'Scottish & Welsh nationalists', 12, 40], ['movement', 'Reform insurgency', 10, 15]],
+  JPN: [['business', 'Keidanren and exporters', 24, 62], ['labor', 'Rengo and workers', 14, 50], ['military', 'Self-Defense Forces', 16, 67], ['security', 'National Security Secretariat', 8, 61], ['regions', 'Prefectural governments', 14, 55], ['media', 'National press', 10, 54], ['movement', 'Constitutional reform movement', 14, 40]],
   IND: [['business', 'Business houses', 22, 74], ['military', 'Armed forces', 14, 70], ['security', 'RAW & Intelligence Bureau', 8, 72], ['clergy', 'Sangh Parivar (RSS)', 18, 86], ['regions', 'State governments', 18, 48], ['labor', 'Farmers\' unions', 12, 32], ['media', 'Media', 8, 70]],
   TUR: [['military', 'Turkish Armed Forces', 18, 60], ['security', 'MİT', 12, 80], ['business', 'Anatolian capital', 18, 72], ['clergy', 'Diyanet', 14, 85], ['regions', 'Kurdish movement', 14, 22], ['media', 'Pro-government media', 12, 88], ['movement', 'Kemalist opposition', 12, 18]],
 };
@@ -396,3 +426,12 @@ export const FOCUS_TREES = {
     ],
   },
 };
+
+// Country-specific lanes adapted to the 2025 campaign.
+for (const [iso3, focuses] of Object.entries(MAJOR_FOCUS_EXPANSIONS)) {
+  FOCUS_TREES[iso3].focuses.push(...focuses);
+}
+FOCUS_TREES.JPN = JAPAN_FOCUS_TREE;
+for (const [iso3, focuses] of Object.entries(MORE_MAJOR_FOCUSES)) {
+  FOCUS_TREES[iso3].focuses.push(...focuses);
+}

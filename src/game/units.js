@@ -1,6 +1,7 @@
 import { haversine, bearing, destination, interpolate, rng, hashString, DEG } from '../util/geo.js';
 import { pixelOf, pixelToLL, MAP_W, MAP_H } from '../world/geo.js';
 import { CITIES, NAVAL_BASES, CARRIER_POSITIONS } from '../data/places.js';
+import { MAJOR_GARRISONS } from '../data/garrisons.js';
 import { clamp } from './game.js';
 import { landSpeed, kitOf, URBAN_DEFENCE } from './orbat.js';
 import { doctrine } from '../world/unitModels.js';
@@ -148,6 +149,33 @@ export class Units {
     for (const [iso, type, divs, lat, lon, name] of DEPLOYMENTS) {
       const n = byIso.get(iso);
       if (n) this.add({ owner: n.index, type, divs, lat, lon, name, exp: 0.5 });
+    }
+    this._generateMajorBattalions();
+  }
+
+  _generateMajorBattalions() {
+    const { byIso, control } = this.world;
+    for (const [iso, anchors] of Object.entries(MAJOR_GARRISONS)) {
+      const n = byIso.get(iso);
+      if (!n) continue;
+      const r = rng(hashString(`${iso}:battalions:2025`));
+      // Nine small formations per region: 108 additional counters per major country.
+      // A battalion is 0.05 division equivalents, so extra counters add roughly five
+      // divisions of strength instead of 108 full divisions.
+      for (let i = 0; i < anchors.length * 9; i++) {
+        const [region, lat, lon] = anchors[i % anchors.length];
+        const anchor = { lat, lon };
+        let pos = null;
+        for (let attempt = 0; attempt < 30; attempt++) {
+          const p = destination(anchor, r() * 360, 3 + r() * 28);
+          if (control[pixelOf(p.lat, p.lon)] === n.index) { pos = p; break; }
+        }
+        pos ??= this._homePos(n, r, i);
+        const type = i % 9 === 0 ? 'armor' : i % 3 === 0 ? 'mech' : 'inf';
+        this.add({ owner: n.index, type, divs: 0.05, lat: pos.lat, lon: pos.lon,
+          name: `${ORD(i + 1)} ${TYPES[type].label} Battalion (${region})`, estimated: true,
+          exp: 0.2 + r() * 0.35 });
+      }
     }
   }
 

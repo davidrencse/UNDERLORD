@@ -1,0 +1,15 @@
+# Modern-day focus tree research
+
+The campaign starts on 20 January 2025. These are original Factions branches informed by modern-day HOI4 mods, not direct ports of their focus scripts. The Fire Rises starts in an alternate 2020, while Millennium Dawn uses a different timeline and deeper mechanics. Branches here use the game's existing political power, party support, stability, economy, defence and unit effects.
+
+| Country | Existing and new Factions lanes | Mod reference |
+| --- | --- | --- |
+| USA | Existing populist, tech-right and opposition paths; new industrial base, Pacific security and post-election policy | [The Fire Rises: United States](https://the-fire-rises-unoffical-database.fandom.com/wiki/United_States_of_America); [Millennium Dawn: United States](https://millenniumdawn.github.io/Millennium-Dawn/countries/united-states/) |
+| UK | Existing Labour, Reform and devolved-government paths; new European, Commonwealth and maritime choices | [Millennium Dawn: UK rework diary](https://millenniumdawn.github.io/Millennium-Dawn/dev-diaries/58-for-king-country-and-md/). [The Fire Rises UK page](https://the-fire-rises-unoffical-database.fandom.com/wiki/United_Kingdom) says the UK has no focus tree in that version. |
+| France | Existing centrist, nationalist and constitutional paths; new Mediterranean or independent military strategy | [The Fire Rises: French situation](https://the-fire-rises-unoffical-database.fandom.com/wiki/French_Republic/Situation) |
+| Germany | Existing coalition, nationalist and breakdown paths; new eastern-defence or diplomatic strategy | [The Fire Rises: German situation](https://the-fire-rises-unoffical-database.fandom.com/wiki/Federal_Republic_of_Germany/Situation) |
+| Russia | Existing war, negotiated settlement and succession paths; new Eurasian trade or security-perimeter strategy | [The Fire Rises: Russian situation](https://the-fire-rises-unoffical-database.fandom.com/wiki/Russian_Federation/Situation) |
+| China | Existing security, reform and succession paths; new maritime or continental strategy | [The Fire Rises: China](https://the-fire-rises-unoffical-database.fandom.com/wiki/People%27s_Republic_of_China); [Millennium Dawn country list](https://millenniumdawn.github.io/Millennium-Dawn/countries/) |
+| Japan | New political, economic and Article 9 defence paths, ending in either counterstrike capability or resilient defensive islands | [Millennium Dawn: Japan military diary](https://millenniumdawn.github.io/Millennium-Dawn/dev-diaries/53-the-military-of-japan/); [The Fire Rises: Japan](https://the-fire-rises-unoffical-database.fandom.com/wiki/State_of_Japan) |
+
+The Fire Rises wiki is community maintained and may not reflect every mod release. The Millennium Dawn diaries describe development plans that can change. The tree data lives in `src/data/politics.js`, `src/data/majorFocuses.js`, and `src/data/majorFocusesMore.js`; each tree is assigned by the country's ISO3 code. The second-stage branches extend domestic, economic and strategic choices without copying focus names or scripts from either mod.

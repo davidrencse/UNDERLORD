@@ -1,5 +1,6 @@
 import { FACTIONS } from '../data/nations.js';
 import { pairKey, DAY } from './game.js';
+import { POLITICAL_DECISIONS, politicalSystem } from './politicalSystems.js';
 
 // Domestic decisions available to the player's own government.
 export const DECISIONS = [
@@ -15,6 +16,10 @@ export const DECISIONS = [
   { id: 'business', name: 'Reassure business elites', cost: 40, cd: 90, desc: 'Tax breaks and regulatory relief.', fx: { loyalty: { business: 12 }, stabNow: -1 } },
 ];
 
+export function domesticDecisions(n) {
+  return [...(POLITICAL_DECISIONS[politicalSystem(n)] ?? []), ...DECISIONS];
+}
+
 export function decisionState(g, n, d) {
   const until = n.cooldowns[d.id] ?? 0;
   if (until > g.time) return { ok: false, why: `Available again in ${Math.ceil((until - g.time) / DAY)} days.` };
@@ -25,6 +30,7 @@ export function decisionState(g, n, d) {
 }
 
 export function takeDecision(g, n, d) {
+  if (!d || !domesticDecisions(n).some((available) => available.id === d.id)) return 'Decision unavailable.';
   const st = decisionState(g, n, d);
   if (!st.ok) return st.why;
   n.pp -= d.cost;
@@ -36,6 +42,7 @@ export function takeDecision(g, n, d) {
 
 // Diplomatic actions from the player (p) toward a target (t).
 export function diplomacy(g, p, t) {
+  if (!p || !t || p === t || !g.nations[p] || !g.nations[t]) return [];
   const P = g.nations[p], T = g.nations[t];
   const op = g.opinion(p, t);
   const atWar = g.atWar(p, t);
@@ -47,13 +54,32 @@ export function diplomacy(g, p, t) {
   add('improve', 'Improve relations', 25, 'Diplomatic visits and trade missions. +15 opinion.', cd('improve') ? 'Recently done.' : !atWar || 'Not while at war.', () => {
     g.addOpinion(p, t, 15); P.cooldowns[`improve:${t}`] = g.time + 30 * DAY;
   });
+  add('influence', 'Influence country', 35, 'Build diplomatic influence. +15 influence and +8 opinion.', cd('influence') ? 'Recently done.' : !atWar || 'Not while at war.', () => {
+    P.influence.set(t, Math.min(100, (P.influence.get(t) ?? 0) + 15));
+    g.addOpinion(p, t, 8);
+    P.cooldowns[`influence:${t}`] = g.time + 45 * DAY;
+    g.log(`${P.name} expands its influence in ${T.name}.`, { nation: p, kind: 'diplo' });
+  });
+  const aid = Math.min(20, P.gdp * 0.005);
+  add('aid', 'Give aid', 40, `Transfer $${aid >= 1 ? aid.toFixed(1) + 'B' : Math.round(aid * 1000) + 'M'} in economic aid. +15 opinion and +3 stability.`, cd('aid') ? 'Recently done.' : atWar ? 'Not while at war.' : P.gdp > aid * 2 || 'Economy too small.', () => {
+    P.gdp -= aid; T.gdp += aid;
+    g.addOpinion(p, t, 15);
+    g.applyFx(T, { stabNow: 3 });
+    P.cooldowns[`aid:${t}`] = g.time + 90 * DAY;
+    g.log(`${P.name} sends economic aid to ${T.name}.`, { nation: p, kind: 'diplo' });
+  });
+  add('alliance', 'Request alliance', 60, 'Propose a mutual defence pact.', allied ? 'Already allied.' : atWar ? 'At war.' : op >= 65 || (op >= 40 && (P.influence.get(t) ?? 0) >= 15) || 'Needs 65 opinion, or 40 opinion and 15 influence.', () => {
+    g.pacts.add(pairKey(p, t));
+    g.addOpinion(p, t, 20);
+    g.log(`${P.name} and ${T.name} sign a mutual defence pact.`, { nation: p, kind: 'diplo', major: true });
+  });
   add('sanction', 'Impose sanctions', 50, 'Restrict trade and finance. Their growth falls; so does their opinion of you.', T.sanctionedBy.has(p) ? 'Already sanctioned.' : (op < 10 && !allied) || 'Only against nations you are on poor terms with.', () => {
     T.sanctionedBy.add(p); g.addOpinion(p, t, -30); P.mods.growth -= Math.min(0.2, T.gdp / P.gdp * 0.3);
     g.log(`${P.name} imposes sanctions on ${T.name}.`, { nation: p, kind: 'diplo', major: P.gdp > 1000 });
   });
   if (T.sanctionedBy.has(p)) add('lift', 'Lift sanctions', 10, 'Restore normal trade.', true, () => { T.sanctionedBy.delete(p); g.addOpinion(p, t, 15); });
-  add('guarantee', 'Guarantee independence', 50, 'A defensive pact: you join any war against them, and they against you.', allied ? 'Already allied.' : atWar ? 'At war.' : op >= 0 || 'They distrust you.', () => {
-    g.pacts.add(pairKey(p, t)); P.guarantees.add(t); g.addOpinion(p, t, 20);
+  add('guarantee', 'Guarantee independence', 50, 'Promise to defend them if attacked.', P.guarantees.has(t) ? 'Already guaranteed.' : atWar ? 'At war.' : op >= 0 || 'They distrust you.', () => {
+    P.guarantees.add(t); g.addOpinion(p, t, 20);
     g.log(`${P.name} guarantees the independence of ${T.name}.`, { nation: p, kind: 'diplo', major: true });
   });
   const leads = P.faction && FACTIONS[P.faction]?.leader === P.key;
@@ -87,4 +113,15 @@ export function diplomacy(g, p, t) {
     });
   }
   return list;
+}
+
+export function takeDiplomaticAction(g, p, t, id) {
+  const act = diplomacy(g, p, t).find((a) => a.id === id);
+  if (!act) return 'Action unavailable.';
+  if (!act.ok) return act.why || 'Action unavailable.';
+  g.nations[p].pp -= act.cost;
+  act.run();
+  g.emit('nation', g.nations[p]);
+  g.emit('nation', g.nations[t]);
+  return null;
 }

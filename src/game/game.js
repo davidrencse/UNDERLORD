@@ -2,6 +2,8 @@ import { SPIRITS, PARTIES, POWER_CENTRES, genericPowerCentres, FOCUS_TREES } fro
 import { PACTS, RIVALRIES, WARS, FACTIONS } from '../data/nations.js';
 import { haversine, rng } from '../util/geo.js';
 import { CRISES } from './crises.js';
+import { politicalPressure, politicalSystem } from './politicalSystems.js';
+import { createBudget, budgetDelta, budgetEffects } from './budget.js';
 
 export const START = Date.UTC(2025, 0, 20, 12);
 export const SPEEDS = [0, 2, 6, 16, 40, 120]; // game hours per real second
@@ -126,6 +128,7 @@ export class Game {
       n.inflation = w.inflation ?? clamp(3 + (n.ideology === 'dem' ? 0 : 3) + r() * 3, 1, 20);
       n.unemployment = w.unemployment ?? clamp(5 + r() * 6, 2, 30);
       n.interest = w.interestRate ?? clamp(n.inflation + 1, 0.5, 40);
+      n.budget = createBudget(n, this.world.budgetBaselines?.countries?.[n.iso3]);
       n.spirits = [...(n.spirits || [])];
       n.timed = [];
       n.mods = { stab: 0, ws: 0, growth: 0, pp: 0, infl: 0 };
@@ -133,6 +136,7 @@ export class Game {
       n.casualties = 0;
       n.exhaustion = 0;
       n.cooldowns = {};
+      n.influence = new Map();
       n.sanctionedBy = new Set();
       n.guarantees = new Set();
       n.justifying = null;
@@ -145,6 +149,7 @@ export class Game {
         politics.next = new Date(START + Math.round((200 + r() * 1200)) * DAY).toISOString().slice(0, 10);
       }
       n.politics = politics;
+      if (n.iso3 === 'CHN') n.politics.congress = '2027-10-01';
 
       const pc = POWER_CENTRES[n.iso3];
       n.powerCentres = pc ? pc.map(([type, name, influence, loyalty]) => ({ type, name, influence, loyalty })) : genericPowerCentres(n);
@@ -175,7 +180,7 @@ export class Game {
     this.pacts = new PairSet();
     for (const [a, b] of PACTS) {
       const A = this.world.byKey.get(a), B = this.world.byKey.get(b);
-      if (A && B) { this.pacts.add(pairKey(A.index, B.index)); A.guarantees.add(B.index); }
+      if (A && B) this.pacts.add(pairKey(A.index, B.index));
     }
     void N;
   }
@@ -255,7 +260,7 @@ export class Game {
   }
   ppGain(n, fx = this.effects(n)) {
     const ruling = n.politics.ruling.length;
-    return 1.6 + fx.pp + (ruling > 2 ? -0.3 : 0) + (n.stability - 50) * 0.008;
+    return 1.6 + fx.pp + (ruling > 2 ? -0.3 : 0) + (n.stability - 50) * 0.008 + politicalPressure(n).pp + budgetEffects(n.budget).pp;
   }
 
   addTimed(n, id, days, mod) {
@@ -289,7 +294,7 @@ export class Game {
     // Defensive obligations: faction members and pact partners join the defender.
     const callers = this.nations.slice(1).filter((n) => !n.inert && n.index !== a && n.index !== d && !war.a.has(n.index));
     for (const n of callers) {
-      const bound = (D.faction && n.faction === D.faction) || this.pacts.has(pairKey(n.index, d));
+      const bound = (D.faction && n.faction === D.faction) || this.pacts.has(pairKey(n.index, d)) || n.guarantees.has(d);
       if (bound && !(A.faction && n.faction === A.faction)) war.d.add(n.index);
     }
     this._rebuildWarPairs();
@@ -372,25 +377,29 @@ export class Game {
     // Only build a new list when something has actually expired.
     if (!n.timed.every((t) => t.until > this.time)) n.timed = n.timed.filter((t) => t.until > this.time);
     const fx = this.effects(n);
+    const fiscal = budgetEffects(n.budget);
     n.pp = clamp(n.pp + this.ppGain(n, fx), 0, 2000);
 
     const atWar = this.warsOf(n.index).length > 0;
-    const growthTarget = n.base.growth + fx.growth + (n.stability - 50) * 0.02 + (atWar && !n.spirits.includes('war_economy') ? -0.8 : 0) - (n.sanctionedBy.size ? 0.6 : 0);
+    const growthTarget = n.base.growth + fx.growth + fiscal.growth + (n.stability - 50) * 0.02 + (atWar && !n.spirits.includes('war_economy') ? -0.8 : 0) - (n.sanctionedBy.size ? 0.6 : 0);
     n.growth += (growthTarget - n.growth) * 0.03;
     n.gdp *= 1 + n.growth / 100 / 365;
     n.inflation += (Math.max(-2, n.base.infl + fx.infl + (atWar ? 1.5 : 0)) - n.inflation) * 0.02;
     n.unemployment += (clamp(n.base.unemp - (n.growth - n.base.growth0) * 0.6, 1, 45) - n.unemployment) * 0.01;
     n.interest += (clamp(n.inflation + 1 + Math.max(0, n.debt - 100) * 0.02, 0, 60) - n.interest) * 0.01;
-    const deficit = (n.defPct - n.base.defPct) + (this.hasSpirit(n, 'stimulus') ? 2 : 0) - (this.hasSpirit(n, 'austerity') ? 2.5 : 0) + (atWar ? 1.5 : 0);
-    n.debt = clamp(n.debt + deficit / 365 - n.debt * (n.growth / 100) / 365 * 0.5, 0, 400);
+    const deficit = budgetDelta(n.budget) + (this.hasSpirit(n, 'stimulus') ? 2 : 0) - (this.hasSpirit(n, 'austerity') ? 2.5 : 0) + (atWar ? 1.5 : 0);
+    const dailyBorrowing = Math.max(0, deficit) * n.gdp / 100 / 365;
+    const reserveUsed = Math.min(n.budget.reserve, dailyBorrowing);
+    n.budget.reserve -= reserveUsed;
+    n.debt = clamp(n.debt + deficit / 365 - reserveUsed / Math.max(0.001, n.gdp) * 100 - n.debt * (n.growth / 100) / 365 * 0.5, 0, 400);
 
     const exhaustion = clamp(n.casualties / Math.max(1, n.pop * 1000) * 2500, 0, 30);
     n.exhaustion = exhaustion;
-    const stabTarget = clamp(n.base.stab + fx.stab + this._econStab(n) + this._loyaltyStab(n) - exhaustion * 0.4, 0, 100);
+    const stabTarget = clamp(n.base.stab + fx.stab + fiscal.stab + this._econStab(n) + this._loyaltyStab(n) + politicalPressure(n).stab - exhaustion * 0.4, 0, 100);
     n.stability += (stabTarget - n.stability) * 0.025;
     const enemies = this.enemiesOf(n.index);
     const defensive = enemies.size &&this.wars.some((w) => w.d.has(n.index));
-    const wsTarget = clamp(n.base.ws + fx.ws + (defensive ? 12 : 0) - exhaustion, 0, 100);
+    const wsTarget = clamp(n.base.ws + fx.ws + fiscal.ws + (defensive ? 12 : 0) - exhaustion, 0, 100);
     n.warSupport += (wsTarget - n.warSupport) * 0.025;
 
     n.manpower = Math.min(n.manpower + n.pop * 0.012 * (0.4 + n.warSupport / 100), n.pop * 1000 * 0.03);
@@ -402,6 +411,7 @@ export class Game {
     }
 
     this._partyDrift(n);
+    if (politicalSystem(n) === 'party' && n.politics.congress && this.time >= parseDay(n.politics.congress)) this.holdPartyCongress(n);
     this._focusTick(n);
     if (n.justifying && this.time >= n.justifying.until) {
       n.wargoals.add(n.justifying.target);
@@ -426,13 +436,25 @@ export class Game {
       else d += unhappy * 0.008;
       p.share = clamp(p.share + d, 0.3, 95);
     }
-    if (pol.next && this.time >= parseDay(pol.next))this.holdElection(n);
+    if (pol.next && this.time >= parseDay(pol.next)) this.holdElection(n);
   }
 
   holdElection(n) {
     const pol = n.politics;
-    const total = pol.list.reduce((s, p) => s + p.share, 0);
     for (const p of pol.list) p.share = clamp(p.share + (this.r() - 0.5) * 4, 0.3, 95);
+    if (politicalSystem(n) === 'managed') {
+      const total = pol.list.filter((p) => p.id !== 'OPP').reduce((s, p) => s + p.share, 0);
+      const ruling = pol.list.find((p) => p.id === 'UR');
+      const result = ruling ? ruling.share / total * 100 : 0;
+      const d = new Date(this.time); d.setUTCFullYear(d.getUTCFullYear() + 5);
+      pol.next = d.toISOString().slice(0, 10);
+      n.stability = clamp(n.stability + (result < 45 ? -4 : 1), 0, 100);
+      for (const p of n.powerCentres) if (p.type === 'regions' || p.type === 'security') p.loyalty = clamp(p.loyalty + (result < 45 ? -6 : 2), 0, 100);
+      this.log(`${n.name} holds Duma elections: United Russia takes ${result.toFixed(1)}% of listed-party support.${result < 45 ? ' Elite confidence weakens.' : ' The governing bloc remains in control.'}`, { nation: n.index, kind: 'politics', major: true });
+      this.emit('politics', n);
+      return;
+    }
+    const total = pol.list.reduce((s, p) => s + p.share, 0);
     const ranked = [...pol.list].sort((a, b) => b.share - a.share);
     const winner = ranked[0];
     const share = (winner.share / total) * 100;
@@ -447,14 +469,25 @@ export class Game {
     const d = new Date(this.time); d.setUTCFullYear(d.getUTCFullYear() + years);
     pol.next = d.toISOString().slice(0, 10);
     const changed = before !== ruling.join(',');
-    if (changed && !(n.iso3 === 'USA' && years === 2)) {
+    const midterm = n.iso3 === 'USA' && new Date(this.time).getUTCFullYear() % 4 === 2;
+    if (changed && !midterm) {
       n.leader = KNOWN_LEADERS[n.iso3]?.[winner.id] ?? `${winner.name} leader`;
       n.ideology = winner.ideo;
       n.spirits = n.spirits.filter((s) => s !== 'coalition_collapse' && s !== 'hung_parliament');
       for (const p of n.powerCentres) p.loyalty = clamp(p.loyalty + (this.r() - 0.5) * 20, 0, 100);
     }
     n.stability = clamp(n.stability + (changed ? 3 : 1), 0, 100);
-    this.log(`${n.name} votes: ${winner.name} first with ${share.toFixed(1)}%.${changed ? ` New government: ${ruling.map((id) => pol.list.find((p) => p.id === id)?.name).join(' + ')}.` : ' The government holds.'}`, { nation: n.index, kind: 'politics', major: n.gdp > 500 || n.index === this.player });
+    this.log(`${n.name} ${midterm ? 'holds midterms' : 'votes'}: ${winner.name} first with ${share.toFixed(1)}%.${changed ? midterm ? ' Congressional control shifts; the president remains in office.' : ` New government: ${ruling.map((id) => pol.list.find((p) => p.id === id)?.name).join(' + ')}.` : ' The government holds.'}`, { nation: n.index, kind: 'politics', major: n.gdp > 500 || n.index === this.player });
+    this.emit('politics', n);
+  }
+
+  holdPartyCongress(n) {
+    const unity = politicalPressure(n).value;
+    const d = new Date(this.time); d.setUTCFullYear(d.getUTCFullYear() + 5);
+    n.politics.congress = d.toISOString().slice(0, 10);
+    n.stability = clamp(n.stability + (unity < 45 ? -5 : 2), 0, 100);
+    for (const p of n.powerCentres) if (p.type === 'regions' || p.type === 'movement') p.loyalty = clamp(p.loyalty + (unity < 45 ? -5 : 3), 0, 100);
+    this.log(`${n.name}'s Party Congress ${unity < 45 ? 'exposes divisions in the leadership' : 'renews the leadership mandate'}.`, { nation: n.index, kind: 'politics', major: true });
     this.emit('politics', n);
   }
 
@@ -511,7 +544,10 @@ export class Game {
     if (fx.growth) n.mods.growth += fx.growth;
     if (fx.infl) n.mods.infl += fx.infl;
     if (fx.debt) n.debt = Math.max(0, n.debt + fx.debt);
-    if (fx.defPct) n.defPct += fx.defPct;
+    if (fx.defPct) {
+      n.defPct += fx.defPct;
+      if (n.budget) n.budget.lines.military.value = n.defPct;
+    }
     if (fx.spirit && !n.spirits.includes(fx.spirit)) n.spirits.push(fx.spirit);
     if (fx.timed) this.addTimed(n, fx.timed[0], fx.timed[1]);
     if (fx.remove) n.spirits = n.spirits.filter((s) => s !== fx.remove);

@@ -127,6 +127,10 @@ function layout(s, iso3) {
     const n = Math.min(3, Math.max(1, Math.round((s.ships ?? 3) / 3)));
     for (let i = 0; i < n; i++) push('submarine', (i - (n - 1) / 2) * 1600, -i * 900, 'sea');
   }
+  if (t.domain === 'land' && s.divs < 1) {
+    const scale = Math.sqrt(s.divs);
+    for (const item of out) { item.x *= scale; item.z *= scale; }
+  }
   return out;
 }
 

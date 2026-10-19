@@ -131,9 +131,10 @@ function fallbackNation(key, name, area) {
 }
 
 export async function loadWorld(onProgress = () => {}) {
-  const [topo, wt] = await Promise.all([
+  const [topo, wt, budgetBaselines] = await Promise.all([
     fetch('/data/countries-50m.json').then((r) => r.json()),
     fetch('/data/watchtower.json').then((r) => r.json()).catch(() => ({ countries: {}, flags: [] })),
+    fetch('/data/budget-baselines.json').then((r) => r.json()).catch(() => ({ countries: {} })),
   ]);
   onProgress('Tracing borders');
   const data = parseNations();
@@ -256,7 +257,7 @@ export async function loadWorld(onProgress = () => {}) {
     idle(warm);
   }
 
-  return { topo, fc, nations, byKey, byIso: new Map(nations.slice(1).map((n) => [n.iso3, n])), owner, control, borders, coast, frontline: wt.frontline, wt };
+  return { topo, fc, nations, byKey, byIso: new Map(nations.slice(1).map((n) => [n.iso3, n])), owner, control, borders, coast, frontline: wt.frontline, wt, budgetBaselines };
 }
 
 export function pixelOf(lat, lon) {

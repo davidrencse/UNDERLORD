@@ -13,7 +13,9 @@ import { IDEOLOGIES } from './data/nations.js';
 import { Overlay } from './ui/overlay.js';
 import { Hud } from './ui/hud.js';
 import { CountryPanel, UnitPanel } from './ui/panels.js';
+import { DiplomacyMenu } from './ui/diplomacyMenu.js';
 import { DossierScreen, FocusScreen, EventModal, StartScreen } from './ui/screens.js';
+import { LedgerScreen } from './ui/ledger.js';
 import { ll2v, interpolate, haversine, destination } from './util/geo.js';
 
 const loading = document.createElement('div');
@@ -64,8 +66,9 @@ const ctx = {
   game, world, units, cam, camera, cityLayer,
   selectedNation: () => selectedNation,
   selectNation, selectUnits, setMode,
-  openDossier: (i) => { if (i != null) { focus.close(); dossier.open(i); } },
-  openFocus: () => { if (game.player != null) { dossier.close(); focus.open(); } },
+  openDossier: (i) => { if (i != null) { focus.close(); ledger.close(); dossier.open(i); } },
+  openFocus: () => { if (game.player != null) { dossier.close(); ledger.close(); focus.open(); } },
+  openLedger: () => { if (game.player != null) { dossier.close(); focus.close(); ledger.open(); } },
   toast: (t) => hud.toast(t),
   refreshTop: () => hud.renderTop(),
   refreshClock: () => hud.renderClock(),
@@ -81,11 +84,44 @@ const ctx = {
 };
 
 const overlay = new Overlay(document.getElementById('overlay'), ctx);
+const selectionBox = document.createElement('div');
+selectionBox.className = 'selection-box';
+selectionBox.hidden = true;
+document.getElementById('overlay').appendChild(selectionBox);
+const selectPos = new THREE.Vector3();
+cam.onSelectDrag = (x0, y0, x1, y1) => {
+  if (x0 == null || start.active) { selectionBox.hidden = true; return; }
+  selectionBox.hidden = false;
+  selectionBox.style.left = `${Math.min(x0, x1)}px`;
+  selectionBox.style.top = `${Math.min(y0, y1)}px`;
+  selectionBox.style.width = `${Math.abs(x1 - x0)}px`;
+  selectionBox.style.height = `${Math.abs(y1 - y0)}px`;
+};
+cam.onSelectEnd = (x0, y0, x1, y1, add) => {
+  selectionBox.hidden = true;
+  if (start.active || game.player == null) return;
+  const left = Math.min(x0, x1), right = Math.max(x0, x1);
+  const top = Math.min(y0, y1), bottom = Math.max(y0, y1);
+  const picked = [];
+  for (const s of units.stacks) {
+    if (s.owner !== game.player) continue;
+    ll2v(s.lat, s.lon, 1.0004, selectPos);
+    if (selectPos.dot(camera.position) <= selectPos.lengthSq() * 1.0002) continue;
+    selectPos.project(camera);
+    if (selectPos.z >= 1) continue;
+    const x = (selectPos.x + 1) * 0.5 * vw;
+    const y = (1 - selectPos.y) * 0.5 * vh;
+    if (x >= left && x <= right && y >= top && y <= bottom) picked.push(s);
+  }
+  selectUnits(add ? [...new Set([...selectedUnits, ...picked])] : picked);
+};
 const hud = new Hud(ui, ctx);
 const countryPanel = new CountryPanel(ui, ctx);
+const diplomacyMenu = new DiplomacyMenu(ui, { ...ctx, countryPanel });
 const unitPanel = new UnitPanel(ui, ctx);
 const dossier = new DossierScreen(ui, ctx);
 const focus = new FocusScreen(ui, ctx);
+const ledger = new LedgerScreen(ui, ctx);
 const events = new EventModal(ui, ctx);
 const start = new StartScreen(ui, ctx);
 loading.remove();
@@ -114,11 +150,12 @@ function rebuildLUT() {
   }
   globe.refreshLUT();
 }
-function setMode(m) { mode = m; globe.uniforms.uMode.value = m; hud.setMode(m); rebuildLUT(); }
+function setMode(m) { diplomacyMenu.close(); mode = m; globe.uniforms.uMode.value = m; hud.setMode(m); rebuildLUT(); }
 
 // ------------------------------------------------------------------ selection
 function selectNation(i, fly = false) {
   if (i == null || !game.nations[i]) return;
+  diplomacyMenu.close();
   selectedNation = i;
   overlay.selectedNation = i;
   globe.uniforms.uSel.value = i;
@@ -150,8 +187,10 @@ function orderSelected(dest) {
 }
 
 function escape() {
-  if (!dossier.el.hidden) dossier.close();
+  if (!diplomacyMenu.el.hidden) diplomacyMenu.close();
+  else if (!dossier.el.hidden) dossier.close();
   else if (!focus.el.hidden) focus.close();
+  else if (!ledger.el.hidden) ledger.close();
   else if (selectedUnits.length) selectUnits([]);
   else if (selectedNation != null) countryPanel.close();
 }
@@ -167,7 +206,13 @@ cam.onClick = (e) => {
 };
 cam.onRightClick = (e) => {
   const ll = cam.pick(e.clientX, e.clientY);
-  if (ll) orderSelected(ll);
+  if (!ll || start.active) return;
+  if (selectedUnits.some((s) => s.owner === game.player) && !e.shiftKey) { diplomacyMenu.close(); orderSelected(ll); return; }
+  const i = nationAt(ll);
+  if (i && i !== game.player && !game.nations[i].inert) {
+    selectNation(i);
+    diplomacyMenu.open(i, e.clientX, e.clientY);
+  } else diplomacyMenu.close();
 };
 let hoverPending = null;
 cam.onHover = (e) => { hoverPending = e; };
@@ -199,6 +244,7 @@ function preview(i) {
 
 function begin(i) {
   game.player = i;
+  cam.selectionEnabled = true;
   globe.uniforms.uPlayer.value = i;
   hud.show();
   setMode(0);
@@ -213,7 +259,7 @@ let dayUIQueued = false;
 function flushDayUI() {
   dayUIQueued = false;
   if (game.player == null) return;
-  hud.renderTop(); countryPanel.render(); hud.drawTimeline(); focus.render();
+  hud.renderTop(); countryPanel.render(); hud.drawTimeline(); focus.render(); ledger.render();
 }
 game.on('day', () => {
   if (mode) rebuildLUT();

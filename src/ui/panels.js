@@ -1,6 +1,7 @@
 import { SPIRITS, POWER_CENTRE_TYPES } from '../data/politics.js';
 import { IDEOLOGIES, BLOCS, FACTIONS } from '../data/nations.js';
-import { DECISIONS, decisionState, takeDecision, diplomacy } from '../game/actions.js';
+import { domesticDecisions, decisionState, takeDecision, diplomacy, takeDiplomaticAction } from '../game/actions.js';
+import { politicalPressure } from '../game/politicalSystems.js';
 import { TYPES, cityAt } from '../game/units.js';
 import { MOVE, DIV_FRONT } from '../game/orbat.js';
 import { money, pct, signed, int, esc, flagHTML, fxText, day, compact } from './format.js';
@@ -66,15 +67,13 @@ export class CountryPanel {
     if (b.dataset.tab) { this.tab = b.dataset.tab; this.render(); }
     else if (b.dataset.close !== undefined) this.close();
     else if (b.dataset.dec) {
-      const d = DECISIONS.find((x) => x.id === b.dataset.dec);
+      const d = domesticDecisions(n).find((x) => x.id === b.dataset.dec);
       const why = takeDecision(game, n, d);
       if (why) this.ctx.toast(why);
       this.render(); this.ctx.refreshTop();
     } else if (b.dataset.dip) {
-      const act = diplomacy(game, game.player, this.nation).find((a) => a.id === b.dataset.dip);
-      if (!act?.ok) { this.ctx.toast(act?.why || 'Not available.'); return; }
-      game.nations[game.player].pp -= act.cost;
-      act.run();
+      const why = takeDiplomaticAction(game, game.player, this.nation, b.dataset.dip);
+      if (why) { this.ctx.toast(why); return; }
       this.render(); this.ctx.refreshTop();
     } else if (b.dataset.loc) {
       const s = units.byId.get(+b.dataset.loc);
@@ -122,7 +121,7 @@ export class CountryPanel {
         <div class="stat"><span class="k">Government</span><span class="v" style="font-family:var(--body);font-weight:400">${esc(n.gov)}</span></div>
         <div class="stat"><span class="k">Ruling ideology</span><span class="v" style="font-family:var(--body);font-weight:400">${ideo}</span></div>
         <div class="stat"><span class="k">Population</span><span class="v">${n.pop >= 1 ? n.pop.toFixed(1) + ' m' : Math.round(n.pop * 1000) + 'k'}</span></div>
-        <div class="stat"><span class="k">Next election</span><span class="v">${n.politics.next ? day(Date.parse(n.politics.next)) : 'None scheduled'}</span></div>
+        <div class="stat"><span class="k">${n.politics.congress ? 'Next Party Congress' : 'Next election'}</span><span class="v">${n.politics.next ? day(Date.parse(n.politics.next)) : n.politics.congress ? day(Date.parse(n.politics.congress)) : 'None scheduled'}</span></div>
       </div>
       <div class="sec"><h3>Alignment</h3><div class="chips">
         ${n.faction ? `<span class="chip faction" title="${esc(FACTIONS[n.faction]?.long)}">${n.faction}</span>` : '<span class="chip">Non-aligned</span>'}
@@ -138,10 +137,17 @@ export class CountryPanel {
 
   _politics(n) {
     const g = this.ctx.game;
+    const pressure = politicalPressure(n);
     const list = [...n.politics.list].sort((a, b) => b.share - a.share);
     const tot = list.reduce((a, p) => a + p.share, 0);
     const focus = n.focus.current ? g.tree(n).focuses.find((f) => f.id === n.focus.current.id) : null;
     return `
+      <div class="sec"><h3>${esc(pressure.name)} <em>${pressure.value.toFixed(0)} / 100</em></h3>
+        <div class="stat"><span class="k">Political power effect</span><span class="v">${signed(pressure.pp, 2)} / day</span></div>
+        <div class="stat"><span class="k">Stability target</span><span class="v">${signed(pressure.stab, 1)} pts</span></div>
+        <p class="note">${esc(pressure.desc)}</p>
+        ${n.politics.congress ? `<p class="note">Next Party Congress: ${day(Date.parse(n.politics.congress))}</p>` : ''}
+      </div>
       <div class="sec"><h3>Parties <em>${n.politics.next ? 'support' : 'estimated support'}</em></h3>
         ${partyBar(n)}
         ${list.map((p) => `<div class="party ${n.politics.ruling.includes(p.id) ? 'ruling' : ''}"><span class="sw" style="background:${IDEO_TONE[p.ideo]}"></span><span class="pn">${esc(p.name)}<small>${esc(p.note)}</small></span><span class="ps">${((p.share / tot) * 100).toFixed(1)}%</span></div>`).join('')}
@@ -206,7 +212,7 @@ export class CountryPanel {
   _diplomacy(n, own) {
     const g = this.ctx.game;
     if (own) {
-      return `<div class="sec"><h3>Decisions <em>${Math.floor(n.pp)} PP available</em></h3><div class="actions">${DECISIONS.map((d) => {
+      return `<div class="sec"><h3>Decisions <em>${Math.floor(n.pp)} PP available</em></h3><div class="actions">${domesticDecisions(n).map((d) => {
         const st = decisionState(g, n, d);
         return `<button class="act" data-dec="${d.id}" ${st.ok ? '' : 'disabled'} title="${esc(st.why ?? '')}"><b>${esc(d.name)}</b><span class="cost">${d.cost} PP</span><small>${esc(st.ok ? d.desc : st.why)}</small></button>`;
       }).join('')}</div></div>
@@ -219,7 +225,8 @@ export class CountryPanel {
     return `
       <div class="sec">
         <div class="stat"><span class="k">Opinion of ${esc(g.nations[g.player].name)}</span><span class="v">${signed(op, 0)}</span><span class="m"><b style="left:50%"></b><i style="left:${op < 0 ? 50 + op / 2 : 50}%;width:${Math.abs(op) / 2}%;background:${op < 0 ? 'var(--hostile)' : 'var(--ink)'}"></i></span></div>
-        <div class="stat"><span class="k">Relationship</span><span class="v" style="font-family:var(--body);font-weight:400">${g.atWar(g.player, n.index) ? 'At war' : g.allied(g.player, n.index) ? 'Allied' : 'Neutral'}</span></div>
+        <div class="stat"><span class="k">Relationship</span><span class="v" style="font-family:var(--body);font-weight:400">${g.atWar(g.player, n.index) ? 'At war' : g.allied(g.player, n.index) ? 'Allied' : g.nations[g.player].guarantees.has(n.index) ? 'Guaranteed' : 'Neutral'}</span></div>
+        <div class="stat"><span class="k">Your influence</span><span class="v">${g.nations[g.player].influence.get(n.index) ?? 0} / 100</span></div>
       </div>
       <div class="sec"><h3>Actions <em>${Math.floor(g.nations[g.player].pp)} PP available</em></h3><div class="actions">${acts.map((a) => `<button class="act${a.danger ? ' danger' : ''}" data-dip="${a.id}" ${a.ok ? '' : 'disabled'}><b>${esc(a.name)}</b><span class="cost">${a.cost ? `${a.cost} PP` : ''}</span><small>${esc(a.ok ? a.desc : a.why || a.desc)}</small></button>`).join('')}</div></div>
       ${enemies.length ? `<div class="sec rowlist"><h3>At war with</h3>${enemies.map((e) => `<div class="ri" data-nation="${e.index}"><span>${esc(e.name)}</span><span>${e.iso3}</span></div>`).join('')}</div>` : ''}`;
@@ -288,7 +295,8 @@ export class UnitPanel {
       <div class="pb">
         ${multi ? `<div class="sec rowlist">${this.list.map((x) => `<div class="ri" data-loc="${x.id}"><span>${esc(x.name)}</span><span>${Math.round(x.str * 100)}%</span></div>`).join('')}</div>` : ''}
         <div class="sec">
-          ${t.domain === 'land' ? `<div class="stat"><span class="k">Divisions</span><span class="v">${this.list.reduce((a, x) => a + x.divs, 0)}</span></div>` : ''}
+          ${t.domain === 'land' ? `<div class="stat"><span class="k">Division equivalents</span><span class="v">${+this.list.reduce((a, x) => a + x.divs, 0).toFixed(2)}</span></div>` : ''}
+          ${this.list.some((x) => x.estimated) ? `<div class="stat"><span class="k">Deployment</span><span class="v">Estimated region</span></div>` : ''}
           ${s.ships ? `<div class="stat"><span class="k">Vessels</span><span class="v">${s.ships}</span></div>` : ''}
           ${s.planes ? `<div class="stat"><span class="k">Aircraft</span><span class="v">${s.planes}</span></div>` : ''}
           <div class="stat"><span class="k">Personnel</span><span class="v">${int(men)}</span></div>
@@ -298,7 +306,7 @@ export class UnitPanel {
           ${equipmentRows(s.type, n.iso3, this.list)}
           ${t.domain === 'land' && MOVE[s.type] ? `<div class="stat"><span class="k">Road march</span><span class="v">${MOVE[s.type].march} <small>km/day</small></span></div>
           <div class="stat"><span class="k">Advance under fire</span><span class="v">${MOVE[s.type].contested} <small>km/day</small></span></div>
-          <div class="stat"><span class="k">Footprint</span><span class="v">${(Math.min(8, s.divs) * DIV_FRONT / 1000).toFixed(1)} × 5 <small>km</small></span></div>
+          <div class="stat"><span class="k">Footprint</span><span class="v">${((s.divs < 1 ? Math.sqrt(s.divs) : Math.min(8, s.divs)) * DIV_FRONT / 1000).toFixed(1)} × ${(s.divs < 1 ? Math.sqrt(s.divs) * 5 : 5).toFixed(1)} <small>km</small></span></div>
           ${cityAt(s) ? `<div class="stat"><span class="k">Terrain</span><span class="v" style="font-family:var(--body);font-weight:400">Urban: ${esc(cityAt(s).name)}</span></div>` : ''}` : t.domain === 'sea' ? `<div class="stat"><span class="k">Speed</span><span class="v">${t.speed} km/h</span></div>` : '<div class="stat"><span class="k">Air support radius</span><span class="v">800 km</span></div>'}
         </div>
         ${own ? `<p class="hint">${t.domain === 'air' ? 'Right-click friendly territory to rebase. Wings support battles within 800 km.' : t.domain === 'sea' ? 'Right-click open water to sail. Hostile fleets within 70 km will engage.' : 'Right-click to move. Moving into enemy formations attacks them; enemy land you cross is occupied.'}</p>

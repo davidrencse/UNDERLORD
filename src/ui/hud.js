@@ -21,6 +21,7 @@ export class Hud {
         <div class="res"></div>
         <div class="spacer"></div>
         <button class="tb-btn" data-act="focus">National trajectory <kbd class="num">T</kbd></button>
+        <button class="tb-btn" data-act="ledger">Ledger <kbd class="num">L</kbd></button>
         <button class="tb-btn" data-act="dossier">Overview <kbd class="num">O</kbd></button>
         <div class="clock">
           <div class="date num"></div>
@@ -72,6 +73,7 @@ export class Hud {
     this.top.querySelectorAll('[data-speed]').forEach((b) => b.addEventListener('click', () => { game.speed = +b.dataset.speed; game.paused = false; this.renderClock(); }));
     this.top.querySelector('[data-act="own"]').addEventListener('click', () => ctx.selectNation(game.player, true));
     this.top.querySelector('[data-act="focus"]').addEventListener('click', () => ctx.openFocus());
+    this.top.querySelector('[data-act="ledger"]').addEventListener('click', () => ctx.openLedger());
     this.top.querySelector('[data-act="dossier"]').addEventListener('click', () => ctx.openDossier(ctx.selectedNation() ?? game.player));
     this.bottom.querySelectorAll('[data-mode]').forEach((b) => b.addEventListener('click', () => ctx.setMode(+b.dataset.mode)));
 
@@ -80,6 +82,7 @@ export class Hud {
       if (e.code === 'Space') { e.preventDefault(); this.togglePause(); }
       else if (/^[1-5]$/.test(e.key)) { game.speed = +e.key; this.renderClock(); }
       else if (e.key === 't' || e.key === 'T') ctx.openFocus();
+      else if (e.key === 'l' || e.key === 'L') ctx.openLedger();
       else if (e.key === 'o' || e.key === 'O') ctx.openDossier(ctx.selectedNation() ?? game.player);
       else if (e.key === 'Escape') ctx.escape();
     });

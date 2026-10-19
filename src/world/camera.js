@@ -18,9 +18,12 @@ export class GlobeCamera {
     this.goal = { lat: 30, lon: 15, dist: 2.9, heading: 0, tiltUser: 0 };
     this.vel = { lat: 0, lon: 0 };
     this.drag = null;
+    this.selectionEnabled = false;
     this.onClick = () => {};
     this.onRightClick = () => {};
     this.onHover = () => {};
+    this.onSelectDrag = () => {};
+    this.onSelectEnd = () => {};
     this.keys = new Set();
     this._rect = null; // cached canvas rect: reading it per pointer move would force a layout
     this._proj = { near: NaN, far: NaN, fov: NaN, aspect: NaN, zoom: NaN };
@@ -78,8 +81,10 @@ export class GlobeCamera {
     window.addEventListener('scroll', dropRect, true);
     if (typeof ResizeObserver === 'function') new ResizeObserver(dropRect).observe(el);
     el.addEventListener('pointerdown', (e) => {
+      if (e.button !== 0 && e.button !== 1 && e.button !== 2) return;
       el.setPointerCapture(e.pointerId);
-      this.drag = { x: e.clientX, y: e.clientY, sx: e.clientX, sy: e.clientY, button: e.button, moved: false, t: performance.now() };
+      const mode = e.button === 2 ? 'rotate' : e.button === 1 || e.button === 0 && (e.shiftKey && !this.selectionEnabled || this.keys.has(' ')) ? 'pan' : this.selectionEnabled ? 'select' : 'pan';
+      this.drag = { x: e.clientX, y: e.clientY, sx: e.clientX, sy: e.clientY, button: e.button, mode, moved: false, shift: e.shiftKey, pointerId: e.pointerId };
       this.vel.lat = this.vel.lon = 0;
     });
     el.addEventListener('pointermove', (e) => {
@@ -90,7 +95,9 @@ export class GlobeCamera {
       d.x = e.clientX; d.y = e.clientY;
       if (Math.hypot(e.clientX - d.sx, e.clientY - d.sy) > 4) d.moved = true;
       if (!d.moved) return;
-      if (d.button === 0) {
+      if (d.mode === 'select') {
+        this.onSelectDrag(d.sx, d.sy, e.clientX, e.clientY);
+      } else if (d.mode === 'pan') {
         const { dLat, dLon } = this._pan(dx, dy);
         this.vel.lat = dLat; this.vel.lon = dLon;
       } else {
@@ -100,13 +107,21 @@ export class GlobeCamera {
     });
     el.addEventListener('pointerup', (e) => {
       const d = this.drag;
+      if (d?.pointerId !== e.pointerId) return;
       this.drag = null;
       if (!d) return;
-      if (!d.moved) {
+      if (d.moved && d.mode === 'select') this.onSelectEnd(d.sx, d.sy, e.clientX, e.clientY, d.shift);
+      else if (!d.moved) {
         this.vel.lat = this.vel.lon = 0;
         if (d.button === 0) this.onClick(e);
         else if (d.button === 2) this.onRightClick(e);
       }
+    });
+    el.addEventListener('pointercancel', (e) => {
+      if (this.drag?.pointerId !== e.pointerId) return;
+      this.drag = null;
+      this.vel.lat = this.vel.lon = 0;
+      this.onSelectDrag();
     });
     el.addEventListener('wheel', (e) => {
       e.preventDefault();
