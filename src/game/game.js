@@ -3,7 +3,7 @@ import { PACTS, RIVALRIES, WARS, FACTIONS } from '../data/nations.js';
 import { haversine, rng } from '../util/geo.js';
 import { CRISES } from './crises.js';
 import { politicalPressure, politicalSystem } from './politicalSystems.js';
-import { createBudget, budgetDelta, budgetEffects } from './budget.js';
+import { createBudget, budgetDelta, budgetEffects, dailyBudgetBorrowing } from './budget.js';
 
 export const START = Date.UTC(2025, 0, 20, 12);
 export const SPEEDS = [0, 2, 6, 16, 40, 120]; // game hours per real second
@@ -388,10 +388,7 @@ export class Game {
     n.unemployment += (clamp(n.base.unemp - (n.growth - n.base.growth0) * 0.6, 1, 45) - n.unemployment) * 0.01;
     n.interest += (clamp(n.inflation + 1 + Math.max(0, n.debt - 100) * 0.02, 0, 60) - n.interest) * 0.01;
     const deficit = budgetDelta(n.budget) + (this.hasSpirit(n, 'stimulus') ? 2 : 0) - (this.hasSpirit(n, 'austerity') ? 2.5 : 0) + (atWar ? 1.5 : 0);
-    const dailyBorrowing = Math.max(0, deficit) * n.gdp / 100 / 365;
-    const reserveUsed = Math.min(n.budget.reserve, dailyBorrowing);
-    n.budget.reserve -= reserveUsed;
-    n.debt = clamp(n.debt + deficit / 365 - reserveUsed / Math.max(0.001, n.gdp) * 100 - n.debt * (n.growth / 100) / 365 * 0.5, 0, 400);
+    n.debt = clamp(n.debt + dailyBudgetBorrowing(n, deficit) - n.debt * (n.growth / 100) / 365 * 0.5, 0, 400);
 
     const exhaustion = clamp(n.casualties / Math.max(1, n.pop * 1000) * 2500, 0, 30);
     n.exhaustion = exhaustion;

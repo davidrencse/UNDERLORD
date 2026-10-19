@@ -57,7 +57,7 @@ export function budgetTotal(budget) {
 }
 
 export function budgetDelta(budget) {
-  return Object.entries(budget.lines).reduce((sum, [id, line]) => sum + line.value - budget.baseline[id], 0);
+  return round(Object.entries(budget.lines).reduce((sum, [id, line]) => sum + line.value - budget.baseline[id], 0));
 }
 
 export function budgetEffects(budget) {
@@ -67,6 +67,16 @@ export function budgetEffects(budget) {
     for (const [key, factor] of Object.entries(line.weight)) effects[key] += delta * factor;
   }
   return effects;
+}
+
+// Borrowed reserves cover only positive annual deficits. Returns the uncovered debt increment
+// in percentage points for one simulated day; debt service and GDP growth remain in Game.
+export function dailyBudgetBorrowing(n, deficit) {
+  const daily = Math.max(0, deficit) / 365;
+  const reserveUsed = Math.min(n.budget.reserve, daily * n.gdp / 100);
+  n.budget.reserve -= reserveUsed;
+  const uncovered = deficit / 365 - reserveUsed / Math.max(0.001, n.gdp) * 100;
+  return deficit >= 0 ? Math.max(0, uncovered) : uncovered;
 }
 
 export function budgetChangeState(g, n, id, direction) {
