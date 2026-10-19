@@ -1,0 +1,20 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>UNDERLORD</title>
+    <meta name="description" content="UNDERLORD — a modern geopolitical grand strategy game. The world doesn't collapse all at once." />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <!-- Loaded without blocking: a pending stylesheet would hold back main.js (and the world download) until it arrives. -->
+    <link rel="preload" as="style" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@300;400;500;600&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" onload="this.onload=null;this.rel='stylesheet'" />
+    <noscript><link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Condensed:wght@300;400;500;600&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" /></noscript>
+  </head>
+  <body>
+    <canvas id="scene"></canvas>
+    <div id="overlay" aria-hidden="true"></div>
+    <div id="ui"></div>
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>
