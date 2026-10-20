@@ -5,6 +5,7 @@ import { MAJOR_GARRISONS } from '../data/garrisons.js';
 import { clamp } from './game.js';
 import { landSpeed, kitOf, URBAN_DEFENCE } from './orbat.js';
 import { doctrine } from '../world/unitModels.js';
+import { Armies, ordinal } from './armies.js';
 
 export const TYPES = {
   armor: { label: 'Armoured', domain: 'land', speed: 9, atk: 1.55, def: 1.0, men: 15000 },
@@ -43,8 +44,8 @@ export function cityAt(p) {
   return best >= 0 ? URBAN[best] : null;
 }
 
-const ORD = (i) => { const s = ['th', 'st', 'nd', 'rd'], v = i % 100; return i + (s[(v - 20) % 10] || s[v] || s[0]); };
-const ROMAN = (n) => { const m = [[10, 'X'], [9, 'IX'], [5, 'V'], [4, 'IV'], [1, 'I']]; let r = ''; for (const [v, s] of m) while (n >= v) { r += s; n -= v; } return r; };
+const ORD = ordinal;
+const ROMAN = (n) => { const m = [[50, 'L'], [40, 'XL'], [10, 'X'], [9, 'IX'], [5, 'V'], [4, 'IV'], [1, 'I']]; let r = ''; for (const [v, s] of m) while (n >= v) { r += s; n -= v; } return r; };
 
 // Forces stationed abroad on 20 January 2025: [owner, type, divisions, lat, lon, name]
 const DEPLOYMENTS = [
@@ -58,6 +59,14 @@ const DEPLOYMENTS = [
   ['TUR', 'inf', 1, 35.2, 33.5, 'Cyprus Turkish Peace Force'], ['IRN', 'inf', 1, 33.3, 44.2, 'Quds Force advisers (Iraq)'],
 ];
 
+// NATO size marks: II battalion, X brigade, XX division, XXX corps, XXXX army.
+export function echelon(divs) { return divs < 0.15 ? 'II' : divs < 0.6 ? 'X' : divs < 1.6 ? 'XX' : divs < 5 ? 'XXX' : 'XXXX'; }
+const ECHELON_NAME = { II: 'Battalion', X: 'Brigade', XX: 'Division', XXX: 'Corps', XXXX: 'Army' };
+const NUM_GROUP = { armor: 'armor', mech: 'mech', airborne: 'airborne', marine: 'marine' };
+
+// Entrenchment builds over eight days in place; a planned attack adds up to +30% (armies.js).
+const DIG_PER_HOUR = 1 / (24 * 8);
+
 export class Units {
   constructor(game, world) {
     this.game = game;
@@ -70,10 +79,13 @@ export class Units {
     this.controlDirty = false;
     this.impacts = []; // artillery and air strikes: { lat, lon, time, urban }
     this.wrecks = []; // destroyed vehicles left where they fell: { lat, lon, kind, yaw, time }
+    this._nums = new Map();
     game.recount();
     this._generate();
+    this.armies = new Armies(this);
+    this.armies.bootstrap();
     game.on('hour', () => this.hourTick());
-    game.on('day', () => this.dailyAI());
+    game.on('day', () => this.armies.daily());
     game.on('raise', (n, fx) => this.raise(n, fx));
   }
 
@@ -83,18 +95,29 @@ export class Units {
     const s = {
       id: this.nextId++, owner: spec.owner, type: spec.type, divs: spec.divs, lat: spec.lat, lon: spec.lon, name: spec.name,
       str: spec.str ?? 1, org: spec.org ?? 1, path: [], state: 'idle', exp: spec.exp ?? 0.3, kit: null,
-      planes: spec.planes, ships: spec.ships,
+      planes: spec.planes, ships: spec.ships, num: spec.num ?? 0,
+      army: 0, supply: 1, dig: 0, plan: 0, slot: null, hub: 0, manual: false,
       prev: undefined, battle: undefined, contested: undefined, attack: undefined, wreckAcc: undefined, _face: undefined, _faceAt: undefined,
     };
     for (const k in spec) if (!(k in s)) s[k] = spec[k];
+    if (TYPES[s.type].domain === 'land') {
+      if (!s.num) s.num = this.nextNum(s.owner, s.type);
+      if (!s.name) s.name = `${s.divs >= 1.6 ? ROMAN(s.num) : ORD(s.num)} ${TYPES[s.type].label} ${ECHELON_NAME[echelon(s.divs)]}`;
+    }
     s.kit = kitOf(s, doctrine(this.game.nations[s.owner].iso3));
     this.stacks.push(s);
     this.byId.set(s.id, s);
     return s;
   }
-  remove(s) { this.stacks = this.stacks.filter((x) => x !== s); this.byId.delete(s.id); }
+  remove(s) { if (s.army) this.armies.detach(s); this.stacks = this.stacks.filter((x) => x !== s); this.byId.delete(s.id); }
+  // Division numbers run per nation and arm, as real armies number them.
+  nextNum(owner, type) {
+    const k = owner * 8 + Object.keys(NUM_GROUP).indexOf(NUM_GROUP[type] ?? 'inf') + 1;
+    const v = (this._nums.get(k) ?? 0) + 1;
+    this._nums.set(k, v);
+    return v;
+  }
   of(i) { return this.stacks.filter((s) => s.owner === i); }
-  _countOf(i) { let k = 0; for (const s of this.stacks) if (s.owner === i) k++; return k; }
 
   // ---------------------------------------------------------------- order of battle
   _generate() {
@@ -105,13 +128,12 @@ export class Units {
       const a = n.army || estimateArmy(n);
       n.army = a;
       const r = rng(hashString(n.iso3));
+      // One counter per division, as in Hearts of Iron; the largest armies pair some into corps.
       const totalDivs = clamp(Math.round(a.active / 14), a.active > 3 ? 1 : 0, 80);
-      const nStacks = clamp(Math.ceil(totalDivs / 4), totalDivs ? 1 : 0, 18);
+      const nStacks = clamp(totalDivs, totalDivs ? 1 : 0, 56);
       const armorShare = clamp(a.mbt / (a.active * 3 + 1), 0.04, 0.45);
-      let left = totalDivs;
       for (let i = 0; i < nStacks; i++) {
-        const divs = i === nStacks - 1 ? left : Math.max(1, Math.round(totalDivs / nStacks + (r() - 0.5) * 2));
-        left -= divs;
+        const divs = Math.floor(totalDivs / nStacks) + (i < totalDivs % nStacks ? 1 : 0);
         if (divs <= 0) break;
         const roll = r();
         let type = roll < armorShare ? 'armor' : roll < armorShare * 2.1 ? 'mech' : 'inf';
@@ -122,7 +144,7 @@ export class Units {
         if (!pos && n.iso3 === 'ISR' && i < 3) pos = [{ lat: 31.42, lon: 34.58 }, { lat: 33.05, lon: 35.45 }, { lat: 31.75, lon: 35.3 }][i];
         if (!pos && n.iso3 === 'PSE') pos = { lat: 31.42 - i * 0.07, lon: 34.38 - i * 0.04 };
         pos ??= this._homePos(n, r, i);
-        this.add({ owner: n.index, type, divs, lat: pos.lat, lon: pos.lon, name: divs >= 3 ? `${ROMAN(i + 1)} ${TYPES[type].label} Corps` : `${ORD(i + 1)} ${TYPES[type].label} Division`, exp: 0.25 + r() * 0.35 + (n.iso3 === 'UKR' || n.iso3 === 'RUS' || n.iso3 === 'ISR' ? 0.3 : 0) });
+        this.add({ owner: n.index, type, divs, lat: pos.lat, lon: pos.lon, exp: 0.25 + r() * 0.35 + (n.iso3 === 'UKR' || n.iso3 === 'RUS' || n.iso3 === 'ISR' ? 0.3 : 0) });
       }
       const wings = clamp(Math.round(a.air / 110), 0, 7);
       for (let i = 0; i < wings; i++) {
@@ -148,7 +170,7 @@ export class Units {
     }
     for (const [iso, type, divs, lat, lon, name] of DEPLOYMENTS) {
       const n = byIso.get(iso);
-      if (n) this.add({ owner: n.index, type, divs, lat, lon, name, exp: 0.5 });
+      if (n) this.add({ owner: n.index, type, divs, lat, lon, name, exp: 0.5, abroad: true });
     }
     this._generateMajorBattalions();
   }
@@ -172,8 +194,9 @@ export class Units {
         }
         pos ??= this._homePos(n, r, i);
         const type = i % 9 === 0 ? 'armor' : i % 3 === 0 ? 'mech' : 'inf';
-        this.add({ owner: n.index, type, divs: 0.05, lat: pos.lat, lon: pos.lon,
-          name: `${ORD(i + 1)} ${TYPES[type].label} Battalion (${region})`, estimated: true,
+        const num = this.nextNum(n.index, type);
+        this.add({ owner: n.index, type, divs: 0.05, lat: pos.lat, lon: pos.lon, num,
+          name: `${ORD(num)} ${TYPES[type].label} Battalion (${region})`, estimated: true,
           exp: 0.2 + r() * 0.35 });
       }
     }
@@ -225,7 +248,7 @@ export class Units {
     const r = this.r;
     for (let i = 0; i < (fx.divisions ?? 0); i++) {
       const p = this._homePos(n, r, 0);
-      this.add({ owner: n.index, type: r() < 0.4 ? 'mech' : 'inf', divs: 1, lat: p.lat, lon: p.lon, name: `${ORD(this._countOf(n.index) + 1)} Division (new)`, str: 0.6, org: 0.5, exp: 0.15 });
+      this.add({ owner: n.index, type: r() < 0.4 ? 'mech' : 'inf', divs: 1, lat: p.lat, lon: p.lon, str: 0.6, org: 0.5, exp: 0.15, fresh: true });
     }
     for (let i = 0; i < (fx.airWings ?? 0); i++) {
       const p = this._homePos(n, r, 1);
@@ -274,7 +297,10 @@ export class Units {
     if (why) return why;
     s.path = [dest];
     s.state = 'moving';
-    s.attack = null;
+    // Only a move onto enemy-held ground seeks battle; shuffling along your own side does not.
+    const c = this.world.control[pixelOf(dest.lat, dest.lon)];
+    s.attack = this.game.atWar(c, s.owner);
+    s.dig = 0;
     if (s.battle) this._endBattle(s.battle);
     return null;
   }
@@ -285,16 +311,27 @@ export class Units {
     for (const s of this.stacks) {
       if (s.state === 'moving' || s.state === 'retreat') this._move(s);
       const land = TYPES[s.type].domain === 'land';
+      if (land) {
+        if (s.state === 'idle') s.dig = Math.min(1, s.dig + DIG_PER_HOUR * (s.slot && this.armies.byId.get(s.army)?.stance === 'fallback' ? 1.5 : 1));
+        else if (s.state !== 'battle') s.dig = 0;
+      }
       if (!s.battle) {
-        s.org = Math.min(1, s.org + 0.012);
-        if (s.str < 1 && land) {
+        // Supply governs recovery: a cut-off division barely regains organisation, cannot take
+        // replacements, and wastes away.
+        const sup = land ? s.supply : 1;
+        s.org = Math.min(1, s.org + 0.012 * (0.25 + 0.75 * sup));
+        if (land) {
           const n = g.nations[s.owner];
-          if (n.manpower > 1 && g.allied(control[pixelOf(s.lat, s.lon)], s.owner)) { const add = Math.min(0.0025, 1 - s.str); s.str += add; n.manpower -= add * s.divs * 14; }
+          if (s.str < 1 && sup > 0.3 && n.manpower > 1 && g.allied(control[pixelOf(s.lat, s.lon)], s.owner)) { const add = Math.min(0.0025 * sup, 1 - s.str); s.str += add; n.manpower -= add * s.divs * 14; }
+          else if (sup < 0.2 && s.str > 0.1) { const loss = 0.0006 * (1 - sup / 0.2); s.str -= loss; n.casualties += loss * (s.kit?.men ?? s.divs * TYPES[s.type].men) * 0.1; }
         }
       }
-      // A deployed division holds ground a few kilometres around it; an advancing one clears a wider swath.
-      if (land && g.enemiesOf(s.owner).size) this._occupy(s, s.state === 'moving' ? 9 : 5);
+      // Only an advancing division takes ground, clearing a swath as it goes. Holding a line,
+      // fighting, retreating or moving behind your own side takes nothing (a division parked on
+      // the line would otherwise creep the border forward a pixel at a time).
+      if (land && s.state === 'moving' && (s.contested || s.attack) && g.enemiesOf(s.owner).size) this._occupy(s, 5);
     }
+    this.armies.hourly();
     this._engage();
     if (this.battles.length) {
       // Air wings never fight, so their positions are fixed for the rest of the hour.
@@ -389,7 +426,7 @@ export class Units {
     // Only stacks of nations at war can engage or be engaged, so the rest are left out of the grid.
     // Movers are collected first; with none, there is nothing to search.
     const movers = [];
-    for (const s of this.stacks) if (!s.battle && s.state === 'moving' && TYPES[s.type].domain !== 'air' && g.enemiesOf(s.owner).size) movers.push(s);
+    for (const s of this.stacks) if (!s.battle && s.state === 'moving' && (s.attack || s.contested || TYPES[s.type].domain === 'sea') && TYPES[s.type].domain !== 'air' && g.enemiesOf(s.owner).size) movers.push(s);
     if (!movers.length) return;
     const grid = this._grid ??= new Map();
     grid.clear();
@@ -403,8 +440,9 @@ export class Units {
     for (const s of movers) {
       if (s.battle || s.state !== 'moving') continue;
       const dom = TYPES[s.type].domain;
-      // Contact range: tube artillery reaches 20-30 km, so formations engage well before they touch.
-      let target = null, best = dom === 'sea' ? 70 : 18;
+      // Contact range: tube artillery reaches 20-30 km, so formations engage well before they touch,
+      // and a division holding a line covers the frontage either side of it.
+      let target = null, best = dom === 'sea' ? 70 : 25;
       for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
         const cell = grid.get(key(s.lat + dy, s.lon + dx));
         if (cell) for (const o of cell) {
@@ -441,18 +479,20 @@ export class Units {
     const att = [...b.att].filter((s) => this.byId.has(s.id));
     const def = [...b.def].filter((s) => this.byId.has(s.id));
     if (!att.length || !def.length) { this._endBattle(b); return; }
-    const pow = (list, role) => list.reduce((t, s) => t + s.divs * s.str * (0.3 + 0.7 * s.org) * TYPES[s.type][role] * (0.7 + s.exp), 0);
+    // Supply, entrenchment (defence) and planning (attack) scale each division's weight.
+    const pow = (list, role) => list.reduce((t, s) => t + s.divs * s.str * (0.3 + 0.7 * s.org) * TYPES[s.type][role] * (0.7 + s.exp)
+      * (0.4 + 0.6 * s.supply) * (role === 'atk' ? 1 + s.plan : 1 + 0.5 * s.dig), 0);
     const pa = pow(att, 'atk') * this._support(att[0].owner, b);
     const urban = b.dom === 'land' ? cityAt(b) : null;
     const pd = pow(def, 'def') * 1.25 * this._support(def[0].owner, b) * (urban ? URBAN_DEFENCE : 1);
     const ratio = pa / Math.max(0.05, pd);
-    const hitD = 0.0042 * Math.min(4, ratio) * (0.6 + this.r() * 0.8);
-    const hitA = 0.0036 * Math.min(4, 1 / ratio) * (0.6 + this.r() * 0.8);
+    const hitD = 0.0016 * Math.min(4, ratio) * (0.6 + this.r() * 0.8);
+    const hitA = 0.0014 * Math.min(4, 1 / ratio) * (0.6 + this.r() * 0.8);
     const apply = (list, hit) => {
       for (const s of list) {
         const dmg = hit / Math.sqrt(s.divs);
         s.str = Math.max(0.05, s.str - dmg);
-        s.org = Math.max(0, s.org - dmg * 6);
+        s.org = Math.max(0, s.org - dmg * 8);
         s.exp = Math.min(1, s.exp + 0.0004);
         const n = g.nations[s.owner];
         n.casualties += dmg * (s.kit?.men ?? s.divs * TYPES[s.type].men) * 0.18;
@@ -513,36 +553,12 @@ export class Units {
     s.path = [dest];
     s.state = 'retreat';
     s.battle = null;
+    s.dig = 0;
   }
 
   _endBattle(b) {
     for (const s of [...b.att, ...b.def]) if (s.battle === b) { s.battle = null; if (s.state === 'battle') s.state = s.path.length ? 'moving' : 'idle'; }
     this.battles = this.battles.filter((x) => x !== b);
-  }
-
-  // ---------------------------------------------------------------- AI
-  dailyAI() {
-    const g = this.game;
-    for (const s of this.stacks) {
-      if (s.owner === g.player || s.battle || s.state !== 'idle') continue;
-      if (TYPES[s.type].domain !== 'land') continue;
-      const enemies = g.enemiesOf(s.owner);
-      if (!enemies.size) continue;
-      const n = g.nations[s.owner];
-      const aggression = 0.06 + (n.warSupport / 100) * 0.12;
-      if (this.r() > aggression) continue;
-      let target = null, best = 260;
-      for (const o of this.stacks) {
-        if (!enemies.has(o.owner) || TYPES[o.type].domain !== 'land') continue;
-        if (Math.abs(o.lat - s.lat) * KM_PER_DEG_LO > best) continue;
-        const d = haversine(s, o);
-        if (d < best) { best = d; target = o; }
-      }
-      if (!target) continue;
-      const mine = s.divs * s.str * s.org * TYPES[s.type].atk;
-      const theirs = target.divs * target.str * Math.max(0.2, target.org) * TYPES[target.type].def * 1.25;
-      if (mine / Math.max(0.1, theirs) > 0.75 && s.org > 0.7 && s.str > 0.5) this.order(s, { lat: target.lat, lon: target.lon });
-    }
   }
 }
 

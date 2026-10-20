@@ -15,6 +15,28 @@ export const SYMBOLS = {
   sub: '<path d="M3 10c0-2 3-3 9-3s9 1 9 3-3 3-9 3-9-1-9-3Z"/><path d="M10 7V4.5h3V7"/>',
 };
 
+// Land formations are round counters, as on a campaign map: the size mark (XX for a division)
+// on the dark upper half, the unit number on the lower half in the side's colour, and an outer
+// ring drawn as far round as the formation's strength. Armour is a dark counter with a coloured
+// number; mechanised carries a track bar over the size mark; airborne has a broken ring and
+// marines a wave under the number. `routed` strikes the counter through.
+export function counter({ type, ech, num, str, routed }) {
+  const pct = Math.max(0, Math.min(100, Math.round(str * 100)));
+  const lower = type === 'armor' ? '' : '<path class="fill" d="M3.5 16a12.5 12.5 0 0 0 25 0Z"/>';
+  return `<svg class="ctr t-${type}" viewBox="0 0 32 32" aria-hidden="true">`
+    + '<circle class="halo" cx="16" cy="16" r="15.3"/>'
+    + '<circle class="bg" cx="16" cy="16" r="12.5"/>'
+    + lower
+    + `<circle class="trk${type === 'airborne' ? ' dash' : ''}" cx="16" cy="16" r="13.6"/>`
+    + `<circle class="str" cx="16" cy="16" r="13.6" pathLength="100" stroke-dasharray="${pct} 100" transform="rotate(-90 16 16)"/>`
+    + (type === 'mech' ? '<rect class="mk" x="10.5" y="5" width="11" height="3.2" rx="1.6"/>' : '')
+    + (type === 'marine' ? '<path class="mk-l" d="M10 27c2-1.4 4-1.4 6 0s4 1.4 6 0"/>' : '')
+    + `<text class="e" x="16" y="${type === 'mech' ? 14.2 : 13.2}">${ech}</text>`
+    + `<text class="k" x="16" y="25.2">${num}</text>`
+    + (routed ? '<path class="x" d="M7.5 7.5 24.5 24.5"/>' : '')
+    + '</svg>';
+}
+
 const SVG_CACHE = new Map();
 export const svg = (type) => {
   let out = SVG_CACHE.get(type);

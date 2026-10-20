@@ -16,6 +16,7 @@ import { CountryPanel, UnitPanel } from './ui/panels.js';
 import { DiplomacyMenu } from './ui/diplomacyMenu.js';
 import { DossierScreen, FocusScreen, EventModal, StartScreen } from './ui/screens.js';
 import { LedgerScreen } from './ui/ledger.js';
+import { ArmyBar } from './ui/armyBar.js';
 import { ll2v, interpolate, haversine, destination } from './util/geo.js';
 
 const loading = document.createElement('div');
@@ -60,6 +61,10 @@ let vw = window.innerWidth, vh = window.innerHeight;
 let mode = 0;
 let selectedNation = null;
 let selectedUnits = [];
+// Battle-plan tools: { kind: 'front' | 'fallback' | 'offensive' | 'hub', army, pts }.
+let tool = null;
+let toolHover = null;
+let activeArmy = null;
 
 const ui = document.getElementById('ui');
 const ctx = {
@@ -80,6 +85,12 @@ const ctx = {
   },
   onUnitRightClick: (target) => orderSelected({ lat: target.lat, lon: target.lon }),
   begin, preview,
+  tool: () => tool,
+  toolHover: () => toolHover,
+  setTool,
+  activeArmy: () => activeArmy,
+  setActiveArmy,
+  selectedUnits: () => selectedUnits,
   onPanelClose: () => { selectedNation = null; overlay.selectedNation = null; globe.uniforms.uSel.value = -1; globe.setSelectionOutline(null); },
 };
 
@@ -123,6 +134,7 @@ const dossier = new DossierScreen(ui, ctx);
 const focus = new FocusScreen(ui, ctx);
 const ledger = new LedgerScreen(ui, ctx);
 const events = new EventModal(ui, ctx);
+const armyBar = new ArmyBar(ui, ctx);
 const start = new StartScreen(ui, ctx);
 loading.remove();
 
@@ -170,7 +182,59 @@ function selectNation(i, fly = false) {
 function selectUnits(list) {
   selectedUnits = list;
   overlay.selected = new Set(list.map((s) => s.id));
+  // Picking out one army's divisions makes it the army the plan tools act on.
+  const armyIds = new Set(list.filter((s) => s.owner === game.player && s.army).map((s) => s.army));
+  if (armyIds.size === 1 && list.every((s) => s.army)) setActiveArmy([...armyIds][0]);
   unitPanel.show(list);
+  armyBar.render();
+}
+
+function setActiveArmy(id) {
+  activeArmy = id;
+  overlay.activeArmy = id;
+  if (tool && tool.kind !== 'hub' && tool.army !== id) setTool(null);
+  armyBar.render();
+  unitPanel.render();
+}
+
+function setTool(t) {
+  tool = t;
+  toolHover = null;
+  document.body.classList.toggle('tool-on', !!t);
+  armyBar.render();
+}
+
+// A click while a plan tool is active: pick the front's enemy, add a line point, or site a hub.
+function toolClick(ll) {
+  if (!ll) return;
+  const A = units.armies, a = A.byId.get(tool.army);
+  if (tool.kind === 'hub') {
+    const why = A.buildHub(game.player, ll);
+    if (why) { hud.toast(why); return; }
+    setTool(null);
+    hud.toast('Supply hub under construction.');
+    hud.renderTop();
+  } else if (tool.kind === 'front') {
+    if (!a) { setTool(null); return; }
+    const why = A.setFront(a, world.control[pixelOf(ll.lat, ll.lon)], ll);
+    if (why) { hud.toast(why); return; }
+    setTool(null);
+    hud.toast(`${a.name} is deploying along the front.`);
+  } else {
+    tool.pts.push({ lat: ll.lat, lon: ll.lon });
+    armyBar.render();
+  }
+}
+
+function finishTool() {
+  if (!tool) return;
+  if (!tool.pts) { setTool(null); return; }
+  const A = units.armies, a = A.byId.get(tool.army);
+  if (!a) { setTool(null); return; }
+  if (tool.pts.length < 2) { hud.toast('Click at least two points, then finish the line.'); return; }
+  const why = tool.kind === 'fallback' ? A.setFallback(a, tool.pts) : A.setOffensive(a, tool.pts);
+  if (why) { hud.toast(why); return; }
+  setTool(null);
 }
 
 function orderSelected(dest) {
@@ -181,13 +245,16 @@ function orderSelected(dest) {
     const d = mine.length > 1 && TYPES[s.type].domain === 'land' ? destination(dest, (k * 360) / mine.length, Math.min(25, 6 * k)) : dest;
     const why = units.order(s, d);
     if (why && !first) first = why;
+    // A hand-moved division finishes the move, then its army's plan takes it back.
+    else if (!why && s.army) s.manual = true;
   });
   if (first) hud.toast(first);
   unitPanel.render();
 }
 
 function escape() {
-  if (!diplomacyMenu.el.hidden) diplomacyMenu.close();
+  if (tool) setTool(null);
+  else if (!diplomacyMenu.el.hidden) diplomacyMenu.close();
   else if (!dossier.el.hidden) dossier.close();
   else if (!focus.el.hidden) focus.close();
   else if (!ledger.el.hidden) ledger.close();
@@ -201,12 +268,14 @@ cam.onClick = (e) => {
   const ll = cam.pick(e.clientX, e.clientY);
   const i = nationAt(ll);
   if (start.active) { if (i) start.choose(i); return; }
+  if (tool) { toolClick(ll); return; }
   if (!e.shiftKey) selectUnits([]);
   if (i && !game.nations[i].inert) selectNation(i);
 };
 cam.onRightClick = (e) => {
   const ll = cam.pick(e.clientX, e.clientY);
   if (!ll || start.active) return;
+  if (tool) { if (tool.pts?.length) finishTool(); else setTool(null); return; }
   if (selectedUnits.some((s) => s.owner === game.player) && !e.shiftKey) { diplomacyMenu.close(); orderSelected(ll); return; }
   const i = nationAt(ll);
   if (i && i !== game.player && !game.nations[i].inert) {
@@ -222,6 +291,7 @@ function processHover() {
   hoverPending = null;
   const ll = cam.pick(e.clientX, e.clientY);
   const i = nationAt(ll);
+  if (tool) toolHover = ll;
   globe.uniforms.uHover.value = i || -1;
   if (ll && !hud.top.hidden) {
     const c = world.control[pixelOf(ll.lat, ll.lon)];
@@ -247,6 +317,10 @@ function begin(i) {
   cam.selectionEnabled = true;
   globe.uniforms.uPlayer.value = i;
   hud.show();
+  armyBar.show();
+  units.armies.traceWarFront();
+  const first = units.armies.of(i)[0];
+  if (first) setActiveArmy(first.id);
   setMode(0);
   selectNation(i, true);
   hud.toast('Time is paused. Press Space to start, 1–5 to change speed.');
@@ -274,6 +348,7 @@ game.on('control', (annexed) => { ctrlDirty = true; if (annexed) ownerDirty = tr
 
 window.addEventListener('keydown', (e) => {
   if (e.key === 'n' || e.key === 'N') globe.uniforms.uNightOn.value = globe.uniforms.uNightOn.value ? 0 : 1;
+  if (e.key === 'Enter' && tool && !e.target.closest('input,textarea,button')) { e.preventDefault(); finishTool(); }
 });
 window.addEventListener('resize', () => {
   vw = window.innerWidth; vh = window.innerHeight;
@@ -375,7 +450,7 @@ function frame(now) {
   uiTimer += dt;
   if (uiTimer > 0.25 && game.player != null) {
     uiTimer = 0;
-    if (game.time !== lastHour) { lastHour = game.time; hud.renderClock(); unitPanel.render(); }
+    if (game.time !== lastHour) { lastHour = game.time; hud.renderClock(); unitPanel.render(); armyBar.render(); }
   }
   renderer.render(scene, camera);
   requestAnimationFrame(frame);

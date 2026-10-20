@@ -2,7 +2,7 @@ import { SPIRITS, POWER_CENTRE_TYPES } from '../data/politics.js';
 import { IDEOLOGIES, BLOCS, FACTIONS } from '../data/nations.js';
 import { domesticDecisions, decisionState, takeDecision, diplomacy, takeDiplomaticAction } from '../game/actions.js';
 import { politicalPressure } from '../game/politicalSystems.js';
-import { TYPES, cityAt } from '../game/units.js';
+import { TYPES, cityAt, echelon } from '../game/units.js';
 import { MOVE, DIV_FRONT } from '../game/orbat.js';
 import { money, pct, signed, int, esc, flagHTML, fxText, day, compact } from './format.js';
 import { svg } from './symbols.js';
@@ -261,9 +261,14 @@ export class UnitPanel {
     this.el.hidden = true;
     root.appendChild(this.el);
     this.el.addEventListener('click', (e) => {
-      const b = e.target.closest('[data-close],[data-halt],[data-loc]');
+      const b = e.target.closest('[data-close],[data-halt],[data-loc],[data-form],[data-join],[data-leave]');
       if (!b) return;
+      const A = this.ctx.units.armies, p = this.ctx.game.player;
+      const mine = () => this.list.filter((s) => s.owner === p && s.kit);
       if (b.dataset.close !== undefined) this.ctx.selectUnits([]);
+      else if (b.dataset.form !== undefined) { const a = A.create(p, mine()); this.ctx.setActiveArmy(a.id); this.ctx.selectUnits(A.members(a)); }
+      else if (b.dataset.join) { const a = A.byId.get(+b.dataset.join); if (a) A.assign(a, mine()); this.ctx.setActiveArmy(+b.dataset.join); this.render(); }
+      else if (b.dataset.leave !== undefined) { for (const s of mine()) if (s.army) A.detach(s); this.render(); }
       else if (b.dataset.halt !== undefined) { for (const s of this.list) if (s.owner === this.ctx.game.player) { s.path = []; s.state = s.battle ? 'battle' : 'idle'; } this.render(); }
       else if (b.dataset.loc) { const s = this.ctx.units.byId.get(+b.dataset.loc); if (s) this.ctx.cam.flyTo(s.lat, s.lon); }
     });
@@ -272,6 +277,30 @@ export class UnitPanel {
   }
 
   show(list) { this.list = list; this.el.hidden = !list.length; this.render(); }
+
+  // Supply, entrenchment and army membership of a land formation (or the first of a selection).
+  _logistics(s, own) {
+    const A = this.ctx.units.armies, a = A.byId.get(s.army);
+    const hub = s.hub ? A.hubs.find((h) => h.id === s.hub) : null;
+    const sup = Math.round(s.supply * 100);
+    const avg = (k) => Math.round((this.list.reduce((t, x) => t + (x[k] ?? 0), 0) / this.list.length) * 100);
+    return `${own ? `<div class="stat"><span class="k">Army</span><span class="v" style="font-family:var(--body);font-weight:400">${a ? esc(a.name) : 'Unassigned'}</span></div>` : ''}
+      <div class="stat"><span class="k">Supply${hub ? ` <small>from ${esc(hub.name)}</small>` : ''}</span><span class="v${sup < 25 ? ' bad' : sup < 50 ? ' warn' : ''}">${this.list.length > 1 ? avg('supply') : sup}%</span><span class="m"><i style="width:${sup}%"></i></span></div>
+      <div class="stat"><span class="k">Entrenchment <small>+${Math.round(avg('dig') * 0.5)}% defence</small></span><span class="v">${avg('dig')}%</span><span class="m"><i style="width:${avg('dig')}%"></i></span></div>
+      ${s.plan ? `<div class="stat"><span class="k">Planning bonus</span><span class="v">+${Math.round(s.plan * 100)}%</span></div>` : ''}`;
+  }
+
+  _armyButtons() {
+    const { units, game } = this.ctx;
+    const A = units.armies, p = game.player;
+    const mine = this.list.filter((s) => s.owner === p && s.kit);
+    if (!mine.length) return '';
+    const active = A.byId.get(this.ctx.activeArmy());
+    const inActive = active && mine.every((s) => s.army === active.id);
+    return `${active && !inActive ? `<button class="btn" data-join="${active.id}">Join ${esc(active.name)}</button>` : ''}
+      <button class="btn" data-form>New army</button>
+      ${mine.some((s) => s.army) ? '<button class="btn" data-leave>Leave army</button>' : ''}`;
+  }
 
   render() {
     if (this.el.hidden) return;
@@ -289,7 +318,7 @@ export class UnitPanel {
       <div class="ph">
         <button class="close" data-close aria-label="Close">✕</button>
         <div class="uname">${multi ? `${this.list.length} formations` : esc(s.name)}</div>
-        <div class="utype">${svg(s.type)}<span>${esc(t.label)}, ${esc(n.name)}</span></div>
+        <div class="utype">${svg(s.type)}<span>${t.domain === 'land' ? `${echelon(s.divs)} · ` : ''}${esc(t.label)}, ${esc(n.name)}</span></div>
         <span class="ustatus ${status[0]}">${status[1]}</span>
       </div>
       <div class="pb">
@@ -303,6 +332,7 @@ export class UnitPanel {
           <div class="stat"><span class="k">Strength</span><span class="v">${Math.round(s.str * 100)}%</span><span class="m"><i style="width:${s.str * 100}%"></i></span></div>
           <div class="stat"><span class="k">Organisation</span><span class="v">${Math.round(s.org * 100)}%</span><span class="m"><i style="width:${s.org * 100}%"></i></span></div>
           <div class="stat"><span class="k">Experience</span><span class="v">${Math.round(s.exp * 100)}%</span></div>
+          ${t.domain === 'land' ? this._logistics(s, own) : ''}
           ${equipmentRows(s.type, n.iso3, this.list)}
           ${t.domain === 'land' && MOVE[s.type] ? `<div class="stat"><span class="k">Road march</span><span class="v">${MOVE[s.type].march} <small>km/day</small></span></div>
           <div class="stat"><span class="k">Advance under fire</span><span class="v">${MOVE[s.type].contested} <small>km/day</small></span></div>
@@ -310,7 +340,10 @@ export class UnitPanel {
           ${cityAt(s) ? `<div class="stat"><span class="k">Terrain</span><span class="v" style="font-family:var(--body);font-weight:400">Urban: ${esc(cityAt(s).name)}</span></div>` : ''}` : t.domain === 'sea' ? `<div class="stat"><span class="k">Speed</span><span class="v">${t.speed} km/h</span></div>` : '<div class="stat"><span class="k">Air support radius</span><span class="v">800 km</span></div>'}
         </div>
         ${own ? `<p class="hint">${t.domain === 'air' ? 'Right-click friendly territory to rebase. Wings support battles within 800 km.' : t.domain === 'sea' ? 'Right-click open water to sail. Hostile fleets within 70 km will engage.' : 'Right-click to move. Moving into enemy formations attacks them; enemy land you cross is occupied.'}</p>
-        ${s.state === 'moving' ? '<button class="btn" data-halt style="margin-top:10px">Halt</button>' : ''}` : ''}
+        <div class="ubtns">
+          ${s.state === 'moving' ? '<button class="btn" data-halt>Halt</button>' : ''}
+          ${t.domain === 'land' ? this._armyButtons() : ''}
+        </div>` : ''}
       </div>`;
     if (html === this._html) return;
     this._html = html;

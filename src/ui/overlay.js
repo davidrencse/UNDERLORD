@@ -1,8 +1,10 @@
 import * as THREE from 'three';
-import { ll2v, DEG } from '../util/geo.js';
+import { ll2v, DEG, haversine, interpolate } from '../util/geo.js';
+import { setBack } from '../game/fronts.js';
+import { hubCap } from '../game/supply.js';
 import { CITIES } from '../data/places.js';
-import { TYPES } from '../game/units.js';
-import { svg } from './symbols.js';
+import { TYPES, echelon } from '../game/units.js';
+import { svg, counter } from './symbols.js';
 import { esc } from './format.js';
 
 const v = new THREE.Vector3();
@@ -14,6 +16,21 @@ const DOMAINS = new Map();
 for (const t of Object.values(TYPES)) if (!DOMAINS.has(t.domain)) DOMAINS.set(t.domain, DOMAINS.size);
 const byPri = (a, b) => a.pri - b.pri;
 const INTEL_SHIFT = { event: 'translate(-50%, calc(-100% - 10px))', node: 'translate(-50%, -100%)' };
+const SVGNS = 'http://www.w3.org/2000/svg';
+
+// Great-circle points every ~30 km along a drawn line, so long legs follow the globe.
+function densify(pts) {
+  const out = [];
+  for (let i = 0; i < pts.length; i++) {
+    if (i) {
+      const steps = Math.ceil(haversine(pts[i - 1], pts[i]) / 30);
+      for (let k = 1; k < steps; k++) out.push(interpolate(pts[i - 1], pts[i], k / steps));
+    }
+    out.push(pts[i]);
+  }
+  return out;
+}
+const toV = (p) => ll2v(p.lat, p.lon, 1.0004);
 
 // Every per-frame DOM write below is skipped when the value it would write is unchanged, so a
 // still camera over a paused (or slow) game touches no styles at all.
@@ -28,6 +45,17 @@ export class Overlay {
     this.intelEls = [];
     this.selected = new Set();
     this.selectedNation = null;
+    this.activeArmy = null;
+    this.hubEls = new Map();
+    // Battle plans and fronts, drawn as screen-space strokes under the counters.
+    this.plansSvg = document.createElementNS(SVGNS, 'svg');
+    this.plansSvg.setAttribute('class', 'plans');
+    this.plansSvg.innerHTML = '<defs><marker id="plan-arrow" viewBox="0 0 10 10" refX="5" refY="5" markerWidth="3.2" markerHeight="3.2" orient="auto"><path d="M0 0 10 5 0 10 3 5Z"/></marker></defs><g></g>';
+    root.appendChild(this.plansSvg);
+    this._planG = this.plansSvg.lastChild;
+    this._planEls = [];
+    this._planItems = [];
+    this._planKey = null;
     this.W = window.innerWidth;
     this.H = window.innerHeight;
     window.addEventListener('resize', () => { this.W = window.innerWidth; this.H = window.innerHeight; });
@@ -122,7 +150,7 @@ export class Overlay {
       this._show(rec, true);
     }
 
-    if (game.player != null) this._units(W, H);
+    if (game.player != null) { this._plans(W, H); this._hubs(W, H); this._units(W, H); }
     this._battles(W, H);
     this._intel(W, H, cityLayer.labels);
     this._crosshair(W, H);
@@ -143,7 +171,7 @@ export class Overlay {
     const { units, game, cam } = this.ctx;
     const compact = cam.dist > 0.7;
     const tags = cam.dist < 0.22;
-    const cell = compact ? 16 : 30;
+    const cell = compact ? 14 : 30;
     const player = game.player;
     const enemies = player != null ? game.enemiesOf(player) : new Set();
     const selected = this.selected;
@@ -159,7 +187,7 @@ export class Overlay {
       if (!rec) {
         const el = document.createElement('div');
         el.className = 'unit';
-        const r = (rec = { el, s, shown: false, kType: null, kDivs: 0, kFlags: 0, kStr: 0, kCount: 0, x: NaN, y: NaN, seen: 0, rep: null, members: [] });
+        const r = (rec = { el, s, shown: false, kType: null, kDivs: 0, kFlags: 0, kStr: 0, kOrg: 0, kCount: 0, kRep: null, x: NaN, y: NaN, seen: 0, rep: null, members: [] });
         el.addEventListener('pointerdown', (e) => { e.stopPropagation(); });
         // The members array is reused every frame, so hand out a copy.
         el.addEventListener('click', (e) => { e.stopPropagation(); this.ctx.onUnitClick(r.rep ?? s, e.shiftKey, r.members.slice()); });
@@ -205,23 +233,38 @@ export class Overlay {
       const { rec, s, rel } = it;
       const members = rec.members;
       rec.rep = s;
-      let sel = false, strSum = 0, divSum = 0;
+      let sel = false, strSum = 0, orgSum = 0, divSum = 0, supMin = 1;
       for (const m of members) {
         if (!sel && selected.has(m.id)) sel = true;
         strSum += m.str * m.divs;
+        orgSum += m.org * m.divs;
         divSum += m.divs;
+        if (m.supply < supMin) supMin = m.supply;
       }
-      const strength = strSum / Math.max(1, divSum);
+      const strength = strSum / Math.max(1e-6, divSum);
       const strQ = Math.round(strength * 20);
-      const flags = rel | (sel ? 4 : 0) | (compact ? 8 : 0) | (tags ? 16 : 0) | (s.battle ? 32 : 0);
-      if (s.type !== rec.kType || divs !== rec.kDivs || flags !== rec.kFlags || strQ !== rec.kStr || members.length !== rec.kCount) {
-        rec.kType = s.type; rec.kDivs = divs; rec.kFlags = flags; rec.kStr = strQ; rec.kCount = members.length;
+      const orgQ = Math.round((orgSum / Math.max(1e-6, divSum)) * 20);
+      const land = TYPES[s.type].domain === 'land';
+      // Supply shown only where it bites: amber below half, red when cut off.
+      const sup = !land || rel > 2 ? 0 : supMin < 0.25 ? 2 : supMin < 0.5 ? 1 : 0;
+      const routed = s.state === 'retreat';
+      const army = land && s.army && s.army === this.activeArmy;
+      const flags = rel | (sel ? 4 : 0) | (compact ? 8 : 0) | (tags ? 16 : 0) | (s.battle ? 32 : 0) | (sup << 6) | (routed ? 256 : 0) | (army ? 512 : 0);
+      if (s.type !== rec.kType || divs !== rec.kDivs || flags !== rec.kFlags || strQ !== rec.kStr || orgQ !== rec.kOrg || members.length !== rec.kCount || s !== rec.kRep) {
+        rec.kType = s.type; rec.kDivs = divs; rec.kFlags = flags; rec.kStr = strQ; rec.kOrg = orgQ; rec.kCount = members.length; rec.kRep = s;
         const relCls = REL_CLS[rel];
         const n = this.ctx.game.nations[s.owner];
-        rec.el.className = `unit ${relCls}${sel ? ' sel' : ''}${compact ? ' compact' : ''}${s.battle ? ' battle' : ''}${tags ? ' tagged' : ''}`;
-        rec.el.title = members.length > 1 ? `${n.name}: ${members.length} formations, ${divs} divisions` : `${n.name}: ${s.name}`;
-        const count = TYPES[s.type].domain === 'land' ? (s.divs < 1 ? members.length > 1 ? members.length : 'B' : divs) : members.length > 1 ? members.length : '';
-        rec.el.innerHTML = `<span class="tag">${esc(n.iso3)}</span>${svg(s.type)}<span class="n">${count}</span><span class="bar"><i style="width:${Math.round(strength * 100)}%"></i></span>`;
+        const many = members.length > 1;
+        if (land) {
+          rec.el.className = `unit land ${relCls}${sel ? ' sel' : ''}${compact ? ' compact' : ''}${s.battle ? ' battle' : ''}${tags ? ' tagged' : ''}${routed ? ' routed' : ''}${army ? ' inarmy' : ''}`;
+          rec.el.title = many ? `${n.name}: ${members.length} formations, ${+divs.toFixed(2)} division equivalents` : `${n.name}: ${s.name}${s.supply < 0.5 ? `. Supply ${Math.round(s.supply * 100)}%` : ''}`;
+          rec.el.innerHTML = `<span class="tag">${esc(n.iso3)}</span>${counter({ type: s.type, ech: echelon(many ? divs : s.divs), num: s.num || '', str: strength, routed })}`
+            + `<span class="org"><i style="width:${orgQ * 5}%"></i></span>${many ? `<span class="more">+${members.length - 1}</span>` : ''}${sup ? `<span class="sup ${sup === 2 ? 'cut' : 'low'}"></span>` : ''}`;
+        } else {
+          rec.el.className = `unit ${relCls}${sel ? ' sel' : ''}${compact ? ' compact' : ''}${s.battle ? ' battle' : ''}${tags ? ' tagged' : ''}`;
+          rec.el.title = many ? `${n.name}: ${members.length} formations` : `${n.name}: ${s.name}`;
+          rec.el.innerHTML = `<span class="tag">${esc(n.iso3)}</span>${svg(s.type)}<span class="n">${many ? members.length : ''}</span><span class="bar"><i style="width:${Math.round(strength * 100)}%"></i></span>`;
+        }
       }
       const x = Math.round(it.x), y = Math.round(it.y);
       if (x !== rec.x || y !== rec.y) { rec.x = x; rec.y = y; rec.el.style.transform = `translate(${x}px, ${y}px) translate(-50%, -50%)`; }
@@ -230,6 +273,107 @@ export class Overlay {
     // Drop references so pooled scratch does not pin removed stacks.
     for (let i = vis.length; i < items.length && items[i].s; i++) { items[i].s = null; items[i].rec = null; }
     for (let i = heads.length; i < entries.length && entries[i].rec; i++) { entries[i].it = null; entries[i].rec = null; }
+  }
+
+  // Rebuilt when a plan changes; projected every frame.
+  _buildPlans() {
+    const { units, game } = this.ctx;
+    const A = units.armies, items = [];
+    const push = (cls, pts, arrow = false) => { if (pts.length > 1) items.push({ cls, pts: pts.map(toV), arrow }); };
+    for (const seg of A.warFront) { push('wf-h', seg); push('wf', seg); }
+    for (const a of A.of(game.player)) {
+      const act = a.id === this.activeArmy ? ' act' : '';
+      if (a.front) for (const seg of a.front.segs) {
+        const line = seg.map((q) => setBack(q, 9));
+        push(`af-h${act}`, line);
+        push(`af${act}${a.executing ? ' exec' : ''}${a.stance === 'fallback' ? ' off' : ''}`, line);
+      }
+      if (a.fallback) push(`fb${act}${a.stance === 'fallback' ? ' manned' : ''}`, densify(a.fallback));
+      if (a.offensive) push(`of${act}${a.executing ? ' exec' : ''}`, densify(a.offensive), true);
+    }
+    return items;
+  }
+
+  _plans(W, H) {
+    const { units, cam } = this.ctx;
+    const A = units.armies;
+    const key = `${A.version}|${this.activeArmy}`;
+    if (key !== this._planKey) { this._planKey = key; this._planItems = this._buildPlans(); }
+    const items = this._planItems.slice();
+    // Supply routes of the selected divisions.
+    if (this.selected.size && this.selected.size <= 40) {
+      const hubs = this._hubById ??= new Map();
+      if (hubs.size !== A.hubs.length) { hubs.clear(); for (const h of A.hubs) hubs.set(h.id, h); }
+      for (const id of this.selected) {
+        const s = units.byId.get(id), h = s && s.hub && hubs.get(s.hub);
+        if (h && s.owner === this.ctx.game.player) items.push({ cls: s.supply < 0.25 ? 'sl cut' : 'sl', pts: [toV(s), toV(h)], arrow: false });
+      }
+    }
+    const tool = this.ctx.tool?.();
+    if (tool?.pts) {
+      const hover = this.ctx.toolHover?.();
+      const pts = hover ? [...tool.pts, hover] : tool.pts;
+      if (pts.length > 1) items.push({ cls: `draft ${tool.kind}`, pts: densify(pts).map(toV), arrow: tool.kind === 'offensive' });
+      for (const p of tool.pts) items.push({ cls: 'draft-pt', pts: [toV(p), toV(p)], arrow: false });
+    }
+    const els = this._planEls;
+    let k = 0;
+    const thin = cam.dist > 0.6;
+    for (const it of items) {
+      let d = '', pen = false;
+      for (const p of it.pts) {
+        const pr = this._facing(p) && this._project(p, W, H);
+        if (!pr || !pr.ok) { pen = false; continue; }
+        d += `${pen ? 'L' : 'M'}${pr.x.toFixed(1)} ${pr.y.toFixed(1)}`;
+        pen = true;
+      }
+      if (!d) continue;
+      let el = els[k];
+      if (!el) { el = els[k] = { p: document.createElementNS(SVGNS, 'path'), d: '', cls: '', arrow: null }; this._planG.appendChild(el.p); }
+      const cls = thin ? `${it.cls} thin` : it.cls;
+      if (el.d !== d) { el.d = d; el.p.setAttribute('d', d); }
+      if (el.cls !== cls) { el.cls = cls; el.p.setAttribute('class', cls); }
+      if (el.arrow !== it.arrow) { el.arrow = it.arrow; if (it.arrow) el.p.setAttribute('marker-end', 'url(#plan-arrow)'); else el.p.removeAttribute('marker-end'); }
+      k++;
+    }
+    for (let i = k; i < els.length; i++) if (els[i].d) { els[i].d = ''; els[i].p.setAttribute('d', ''); }
+  }
+
+  // Supply hubs: railheads and ports, shown once the camera is at theatre scale.
+  _hubs(W, H) {
+    const { units, game, cam } = this.ctx;
+    const A = units.armies, player = game.player, enemies = game.enemiesOf(player);
+    const show = cam.dist < 0.42;
+    const labels = cam.dist < 0.16;
+    for (const h of A.hubs) {
+      let rec = this.hubEls.get(h.id);
+      if (!rec) {
+        if (!show) continue;
+        const el = document.createElement('div');
+        el.className = 'hub';
+        el.innerHTML = '<i></i><b></b>';
+        this.root.appendChild(el);
+        this.hubEls.set(h.id, (rec = { el, shown: true, key: '', x: NaN, y: NaN, pos: toV(h) }));
+      }
+      if (!show || !this._facing(rec.pos)) { this._show(rec, false); continue; }
+      const pr = this._project(rec.pos, W, H);
+      if (!pr.ok) { this._show(rec, false); continue; }
+      const rel = this._relOf(h.ctrl, player, enemies);
+      const cap = hubCap(h, game.time);
+      const building = h.readyAt > game.time, damaged = h.damagedUntil > game.time;
+      const load = Math.round(h.load);
+      const key = `${rel}|${building}|${damaged}|${labels}|${load}|${Math.round(cap)}`;
+      if (key !== rec.key) {
+        rec.key = key;
+        rec.el.className = `hub ${REL_CLS[rel]}${building ? ' building' : ''}${damaged ? ' damaged' : ''}${labels ? ' labelled' : ''}${load > cap && cap ? ' over' : ''}`;
+        rec.el.lastChild.textContent = h.name;
+        rec.el.title = building
+          ? `${h.name}: supply hub under construction, open ${new Date(h.readyAt).toISOString().slice(0, 10)}`
+          : `${h.name}: supply hub, ${Math.round(cap)} divisions of throughput${damaged ? ' (damaged, half capacity)' : ''}. ${load ? `${load} drawing.` : 'Unused.'}`;
+      }
+      if (pr.x !== rec.x || pr.y !== rec.y) { rec.x = pr.x; rec.y = pr.y; rec.el.style.transform = `translate(${pr.x}px, ${pr.y}px)`; }
+      this._show(rec, true);
+    }
   }
 
   _battles(W, H) {

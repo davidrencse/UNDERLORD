@@ -21,6 +21,8 @@ npm run dev        # http://localhost:5199
 | Click a counter, shift-click | Select formations |
 | Right-click a country | Open diplomatic decisions for that country |
 | Right-click with formations selected | Move them; on an enemy counter, attack it. Shift + right-click opens country decisions |
+| Army bar (bottom left) | Select an army; click its card again to fly to it. Front line, Fallback line, Offensive line, Execute |
+| While drawing a line | Click to add points; Enter or right-click finishes; Esc cancels |
 | Space, 1–5 | Pause, game speed |
 | O / T / L | Country overview / national trajectory / your country ledger |
 | N | Toggle the day/night terminator |
@@ -31,12 +33,28 @@ npm run dev        # http://localhost:5199
 - `src/data/`: starting conditions (nations, leaders, parties, power centres, spirits, focus trees, cities, naval bases). The seven major campaign trees continue in `majorFocuses.js` and `majorFocusesMore.js`.
 - `docs/focus-tree-research.md`: sources and adaptation notes for the seven major-country focus trees
 - `src/world/`: globe shader, sovereignty raster, camera, city-level layer
-- `src/game/`: simulation (economy, politics, elections, crisis engine, diplomacy, units, combat, occupation)
+- `src/game/`: simulation (economy, politics, elections, crisis engine, diplomacy, units, combat, occupation, armies, fronts, supply)
 - `src/ui/`: HUD, panels, overview, focus tree, events, start screen
 
 ## Real cities
 
 Below about 190 km altitude, the globe streams real buildings, roads, street lights and water for wherever the camera is: any city on Earth. The source is [OpenFreeMap](https://openfreemap.org)'s free planet vector tiles (OpenStreetMap data, OpenMapTiles schema, no API key), the same source WatchTower, recon-app and crimtracker use. `src/world/tileWorker.js` decodes and extrudes each zoom-14 tile in a Web Worker, and `src/world/osmCity.js` decides which tiles to load and caches them. Building heights come from OSM `render_height`, or 3 m per level. If the tiles can't be reached, the procedural city in `cityLayer.js` takes over.
+
+## Armies and battle plans
+
+The land war works like Hearts of Iron IV (`src/game/armies.js`, `fronts.js`, `supply.js`).
+
+- **Divisions are counters.** Each land formation is a round counter: its NATO size mark (II battalion, X brigade, XX division, XXX corps) over its number, the lower half in your side's colour (amber yours, red enemy, white allied). Armour is a dark counter, mechanised carries a track bar, airborne has a broken ring. The outer ring shows strength, the bar under it organisation, a dot supply trouble (amber low, red cut off), and a strike-through a division in retreat.
+- **Armies** group divisions. Select divisions and press **＋ Army** (or **New army** on the unit card). Nations at war start with their armies already on the line.
+- **Front line:** pick the tool and click the enemy country. The front is traced along the border near where you clicked, the army spreads evenly along it 6 km back, and the line follows the border as it moves.
+- **Fallback line:** draw it on your own ground. With a front as well, **Fall back** / **Return to front** switches between them. Divisions dig in half again as fast on a fallback line.
+- **Offensive line:** draw it across enemy ground. **Execute** sends the divisions nearest it, about one per 15 km of objective, while the rest of the army holds. Executing a front with no offensive line pushes the whole front forward in 15 km bounds. Divisions below 45% organisation stop and hold until they recover.
+- **Planning and entrenchment:** an army with a plan gains up to +30% attack over 14 days, spent while it attacks. A division standing still entrenches over 8 days, up to +50% defence; moving loses it.
+- **Supply hubs** are railheads in every capital and larger city, plus naval bases. Divisions draw from the best hub they can reach over friendly ground: full supply within 300 km, nothing beyond 1,000 km, and a hub's throughput (in divisions) is shared by everyone using it. A route through enemy ground is cut. Low supply slows recovery, stops replacements and weakens a division in battle; a division cut off wastes away. Captured hubs work at half capacity for 30 days. **Supply hub** builds a new one on your ground: 25 political power, open after 20 days. Select divisions to see their supply routes.
+- **Reinforcements:** divisions refill from manpower while in supply. **Training** queues new divisions (infantry 45 days, mechanised 60, armoured 75), limited by training lines from defence spending ($10bn a line). They deploy at the hub nearest the active army and join it.
+- **AI** nations at war build an army, put it on the front with their nearest enemy, attack when planned and stronger, and train replacements.
+
+`npm run sim [days]` runs the war headless on the real start and prints how the fronts move; `npm test` covers the front tracer, supply and the opening deployment.
 
 ## Armies in 3D
 
