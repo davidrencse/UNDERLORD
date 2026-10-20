@@ -34,7 +34,6 @@ export class Hud {
       <div class="bottom" hidden>
         <div class="modes" role="group" aria-label="Map mode">${MAP_MODES.map((m) => `<button data-mode="${m.id}">${m.label}</button>`).join('')}</div>
         <div class="coords"><div class="c1 num"></div><div class="c2"></div></div>
-        <div class="timeline"><canvas></canvas><div class="lbl">World tension <span>120 days</span></div><div class="read"></div></div>
       </div>
       <div class="news" hidden></div>
       <div class="wordmark" hidden>UNDERLORD</div>
@@ -44,8 +43,6 @@ export class Hud {
     this.newsEl = root.querySelector('.news');
     this.wordmark = root.querySelector('.wordmark');
     this.toastEl = root.querySelector('.toast');
-    this.canvas = root.querySelector('.timeline canvas');
-    this.read = root.querySelector('.timeline .read');
     this.c1 = root.querySelector('.coords .c1');
     this.c2 = root.querySelector('.coords .c2');
     this.chipEl = this.top.querySelector('.nation-chip');
@@ -54,20 +51,8 @@ export class Hud {
     this.pauseEl = this.top.querySelector('.pause');
     this.speedEls = [...this.top.querySelectorAll('[data-speed]')];
     // Last HTML written to each region, so unchanged re-renders skip the DOM entirely.
-    this._html = { chip: '', res: '', date: '', pause: '', read: '' };
-    this._tlQueued = false;
+    this._html = { chip: '', res: '', date: '', pause: '' };
     this._newsQ = [];
-    this._tlW = 0;
-    this._tlH = 0;
-    this._monthFmt = new Intl.DateTimeFormat('en-GB', { month: 'short', timeZone: 'UTC' });
-    // Track the timeline's size without reading layout on every redraw.
-    if (typeof ResizeObserver !== 'undefined') {
-      new ResizeObserver((entries) => {
-        const r = entries[entries.length - 1].contentRect;
-        const w = Math.round(r.width), h = Math.round(r.height);
-        if (w !== this._tlW || h !== this._tlH) { this._tlW = w; this._tlH = h; this.drawTimeline(); }
-      }).observe(this.canvas);
-    }
 
     this.pauseEl.addEventListener('click', () => this.togglePause());
     this.top.querySelectorAll('[data-speed]').forEach((b) => b.addEventListener('click', () => { game.speed = +b.dataset.speed; game.paused = false; this.renderClock(); }));
@@ -87,16 +72,12 @@ export class Hud {
       else if (e.key === 'Escape') ctx.escape();
     });
     game.on('news', (item) => this.pushNews(item));
-    window.addEventListener('resize', () => this.drawTimeline());
   }
 
   show() {
     for (const el of [this.top, this.bottom, this.newsEl, this.wordmark]) el.hidden = false;
-    this._tlW = this.canvas.clientWidth;
-    this._tlH = this.canvas.clientHeight;
     this.renderTop();
     this.renderClock();
-    this.drawTimeline();
   }
 
   togglePause() { this.ctx.game.paused = !this.ctx.game.paused; this.renderClock(); }
@@ -160,7 +141,6 @@ export class Hud {
       while (this.newsEl.children.length > 6) this.newsEl.lastChild.remove();
       setTimeout(() => el.remove(), 20000);
     }
-    this.drawTimeline();
   }
 
   toast(text) {
@@ -168,58 +148,5 @@ export class Hud {
     this.toastEl.style.opacity = 1;
     clearTimeout(this._tt);
     this._tt = setTimeout(() => (this.toastEl.style.opacity = 0), 2600);
-  }
-
-  // Coalesces every request made during one task (a day tick, war changes and several news items
-  // can all land in the same frame) into a single redraw at the end of that task, before paint.
-  drawTimeline() {
-    if (this._tlQueued) return;
-    this._tlQueued = true;
-    queueMicrotask(() => { this._tlQueued = false; this._drawTimeline(); });
-  }
-
-  // Daily world-tension histogram, after the timeline strip in the Cape Town reference.
-  _drawTimeline() {
-    const { game } = this.ctx;
-    const c = this.canvas;
-    const dpr = Math.min(2, window.devicePixelRatio || 1);
-    const w = this._tlW, h = this._tlH;
-    if (!w || this.bottom.hidden) return;
-    const cw = (w * dpr) >>> 0, ch = (h * dpr) >>> 0;
-    if (c.width !== cw) c.width = cw;
-    if (c.height !== ch) c.height = ch;
-    const g = c.getContext('2d');
-    g.setTransform(dpr, 0, 0, dpr, 0, 0);
-    g.clearRect(0, 0, w, h);
-    const hist = game.history.slice(-120);
-    const n = hist.length;
-    const top = 26, base = h - 16;
-    const bw = w / 120;
-    g.font = '400 9px JetBrains Mono, monospace';
-    hist.forEach((d, i) => {
-      const x = (120 - n + i) * bw;
-      const bh = Math.max(0.04, (d.tension - 30) / 50) * (base - top);
-      const today = i === n - 1;
-      g.fillStyle = today ? '#ffb547' : i % 2 ? 'rgba(232,232,232,0.85)' : 'rgba(232,232,232,0.55)';
-      g.fillRect(x + 0.5, base - Math.max(1, bh), Math.max(1, bw - 1.5), Math.max(1, bh));
-      if (d.battles > 0) {
-        g.fillStyle = 'rgba(255,68,51,0.85)';
-        g.fillRect(x + 0.5, base - Math.max(1, bh) - Math.min(10, d.battles * 0.4) - 2, Math.max(1, bw - 1.5), Math.min(10, d.battles * 0.4));
-      }
-      const dt = new Date(d.time);
-      if (dt.getUTCDate() === 1) {
-        g.fillStyle = 'rgba(141,145,149,0.9)';
-        g.fillText(this._monthFmt.format(dt) + (dt.getUTCMonth() === 0 ? ` ${dt.getUTCFullYear()}` : ''), x + 2, h - 4);
-        g.fillRect(x, base, 1, 4);
-      }
-      if (d.events?.length) {
-        g.strokeStyle = '#e8e8e8';
-        g.beginPath(); g.moveTo(x + bw / 2 - 4, top - 8); g.lineTo(x + bw / 2 + 4, top - 8); g.lineTo(x + bw / 2, top - 1); g.closePath(); g.stroke();
-      }
-    });
-    g.fillStyle = 'rgba(255,255,255,0.25)';
-    g.fillRect(0, base, w, 1);
-    const last = hist[n - 1];
-    if (last) this._set('read', this.read, `<span>Active wars ${game.wars.length}</span><b>${last.tension.toFixed(0)}</b>`);
   }
 }

@@ -83,7 +83,9 @@ export class GlobeCamera {
     el.addEventListener('pointerdown', (e) => {
       if (e.button !== 0 && e.button !== 1 && e.button !== 2) return;
       el.setPointerCapture(e.pointerId);
-      const mode = e.button === 2 ? 'rotate' : e.button === 1 || e.button === 0 && (e.shiftKey && !this.selectionEnabled || this.keys.has(' ')) ? 'pan' : this.selectionEnabled ? 'select' : 'pan';
+      // Right-drag pans; a right click that never moved still falls through to onRightClick
+      // (move orders) on pointerup. Heading and tilt live on the middle button.
+      const mode = e.button === 1 ? 'rotate' : e.button === 2 || e.button === 0 && (e.shiftKey && !this.selectionEnabled || this.keys.has(' ')) ? 'pan' : this.selectionEnabled ? 'select' : 'pan';
       this.drag = { x: e.clientX, y: e.clientY, sx: e.clientX, sy: e.clientY, button: e.button, mode, moved: false, shift: e.shiftKey, pointerId: e.pointerId };
       this.vel.lat = this.vel.lon = 0;
     });

@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { ll2v } from '../util/geo.js';
+import { DEG, ll2v } from '../util/geo.js';
 import { MAP_W, MAP_H } from './geo.js';
 
 // Front-line mask: one flag per FM×FM block of the id rasters, dilated by one block. With taps
@@ -96,22 +96,35 @@ void main() {
     col = mix(col, occ * 0.85, stripe * 0.42 * rasterFade);
   }
 
-  // Front lines: edges of occupied zones, traced on the control raster.
-  float px = max(fwidth(uvD.x), 1.0 / ${MAP_W}.0) * 1.2;
-  float py = max(fwidth(uvD.y), 1.0 / ${MAP_H}.0) * 1.2;
+  // Front lines: edges of occupied zones, traced on the control raster. Taps run from texel centre
+  // to texel centre, so the neighbour read is the exact next texel however the fragment sits inside
+  // its own. The raster is ~10 km per texel, so rather than tinting the whole texel — which at city
+  // altitude is wider than the screen — the line is drawn on the texel edge the differing neighbour
+  // lies across, with a width in screen pixels. Zoomed out, a texel is at most a pixel wide and
+  // every fragment of the edge texel is within that width, which is the old whole-texel line.
+  vec2 rs = vec2(${MAP_W}.0, ${MAP_H}.0);
+  vec2 tc = uvD * rs;
+  vec2 ti = floor(tc), tf = tc - ti;
+  vec2 tpx = max(vec2(fwidth(tc.x), fwidth(tc.y)), vec2(1e-6)); // texels per screen pixel
+  vec2 reach = max(vec2(1.0), tpx * 1.2); // tap distance in texels: neighbour up close, a pixel out far
   float front = 0.0;
   // A front needs a controlled centre and an occupied texel (control != owner) at the centre or a tap.
   // uFrontMask flags ${FM}-texel cells with an occupied texel in them or their 8 neighbours, so when
   // every tap is under ${FM_REACH} texels away a clear cell proves the loop below would find nothing.
-  bool maskCovers = px * ${MAP_W}.0 < ${FM_REACH}.0 && py * ${MAP_H}.0 < ${FM_REACH}.0;
+  bool maskCovers = reach.x < ${FM_REACH}.0 && reach.y < ${FM_REACH}.0;
   if (ctl > 0.5 && (!maskCovers || textureLod(uFrontMask, uvD, 0.0).r > 0.0)) {
+    float dEdge = 1e9; // distance to the nearest front edge, in screen pixels
     for (int k = 0; k < 4; k++) {
-      vec2 o = k == 0 ? vec2(px, 0.0) : k == 1 ? vec2(-px, 0.0) : k == 2 ? vec2(0.0, py) : vec2(0.0, -py);
-      float c2 = idAtL(uCtrl, uvD + o), o2 = idAtL(uOwner, uvD + o);
-      if (c2 > 0.5 && ctl > 0.5 && abs(c2 - ctl) > 0.5 && (abs(c2 - o2) > 0.5 || abs(ctl - own) > 0.5)) front = 1.0;
+      vec2 d = k == 0 ? vec2(1.0, 0.0) : k == 1 ? vec2(-1.0, 0.0) : k == 2 ? vec2(0.0, 1.0) : vec2(0.0, -1.0);
+      vec2 uv2 = (ti + 0.5 + d * reach) / rs;
+      float c2 = idAtL(uCtrl, uv2), o2 = idAtL(uOwner, uv2);
+      if (c2 > 0.5 && abs(c2 - ctl) > 0.5 && (abs(c2 - o2) > 0.5 || abs(ctl - own) > 0.5)) {
+        float dt = k == 0 ? 1.0 - tf.x : k == 1 ? tf.x : k == 2 ? 1.0 - tf.y : tf.y;
+        dEdge = min(dEdge, dt / (k < 2 ? tpx.x : tpx.y));
+      }
     }
+    front = 1.0 - smoothstep(0.7, 1.7, dEdge);
   }
-  col = mix(col, vec3(1.0, 0.27, 0.2), front * 0.95 * rasterFade);
 
   // Graticule; finer as the camera descends.
   float gstep = uAlt > 0.9 ? 15.0 : (uAlt > 0.12 ? 5.0 : 1.0);
@@ -143,6 +156,10 @@ void main() {
   col += vec3(spec * 0.22);
   float rim = pow(1.0 - max(dot(n, V), 0.0), 3.0);
   col += vec3(0.62, 0.68, 0.75) * rim * 0.22 * (1.0 - near);
+
+  // Fronts are drawn last, after the city-level survey tone and the night shading, so neither
+  // washes them out: a war front has to read at street altitude as clearly as from orbit.
+  col = mix(col, vec3(1.0, 0.27, 0.2) * mix(0.72, 1.0, day), front * 0.95);
 
   gl_FragColor = vec4(col, 1.0);
 }`;
@@ -385,6 +402,16 @@ function sphereGeometry(widthSegments, heightSegments) {
   return g;
 }
 
+// A chord spanning angle t passes t*t/8 radii below the sphere at its middle, and the globe
+// shader writes depth for the exact sphere, so a segment sags into the ground and is clipped away
+// once the lift in update() falls below that sag — which is why 1:50m borders (chords up to 1.1°,
+// sagging 220 m) vanished below ~450 km altitude. Subdividing to LINE_SAG keeps the worst sag
+// near 25 m, a quarter of the ~95 m minimum lift, so line work survives down to street level.
+const LINE_SAG = 2e-6; // radii — target mid-chord sag below the sphere
+const LINE_STEP = Math.sqrt(8 * LINE_SAG) / DEG; // degrees of lat/lon per subdivision
+
+const lineSteps = (a0, a1, b0, b1) => Math.max(1, Math.ceil(Math.max(Math.abs(b0 - a0), Math.abs(b1 - a1)) / LINE_STEP));
+
 function meshToGeometry(ml) {
   // Two passes: count the subdivided segments, then write them straight into a Float32Array.
   let n = 0;
@@ -392,7 +419,7 @@ function meshToGeometry(ml) {
     for (let i = 0; i + 1 < line.length; i++) {
       const [a0, a1] = line[i], [b0, b1] = line[i + 1];
       if (Math.abs(b0 - a0) > 180) continue;
-      n += Math.max(1, Math.ceil(Math.max(Math.abs(b0 - a0), Math.abs(b1 - a1)) / 1.5));
+      n += lineSteps(a0, a1, b0, b1);
     }
   }
   const pos = new Float32Array(n * 6);
@@ -402,7 +429,7 @@ function meshToGeometry(ml) {
     for (let i = 0; i + 1 < line.length; i++) {
       const [a0, a1] = line[i], [b0, b1] = line[i + 1];
       if (Math.abs(b0 - a0) > 180) continue;
-      const steps = Math.max(1, Math.ceil(Math.max(Math.abs(b0 - a0), Math.abs(b1 - a1)) / 1.5));
+      const steps = lineSteps(a0, a1, b0, b1);
       for (let s = 0; s < steps; s++) {
         const t0 = s / steps, t1 = (s + 1) / steps;
         ll2v(a1 + (b1 - a1) * t0, a0 + (b0 - a0) * t0, 1, v); pos[p++] = v.x; pos[p++] = v.y; pos[p++] = v.z;

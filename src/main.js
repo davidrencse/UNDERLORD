@@ -259,13 +259,13 @@ let dayUIQueued = false;
 function flushDayUI() {
   dayUIQueued = false;
   if (game.player == null) return;
-  hud.renderTop(); countryPanel.render(); hud.drawTimeline(); focus.render(); ledger.render();
+  hud.renderTop(); countryPanel.render(); focus.render(); ledger.render();
 }
 game.on('day', () => {
   if (mode) rebuildLUT();
   if (game.player != null && !dayUIQueued) { dayUIQueued = true; queueMicrotask(flushDayUI); }
 });
-game.on('wars', () => { rebuildLUT(); hud.drawTimeline(); });
+game.on('wars', () => rebuildLUT());
 game.on('event', () => events.next());
 game.on('raise', () => setTimeout(() => hud.renderTop(), 0));
 game.on('politics', () => countryPanel.schedule());
