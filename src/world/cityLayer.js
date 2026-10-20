@@ -38,6 +38,40 @@ const EVENT_TYPES = [
   ['Power grid down', 'Substation'], ['Missile strike', 'City centre'], ['Evacuation route', 'Bridge crossing'], ['Command post', 'Underground'],
 ];
 const NODES = [['Mobile data', 'Uplink 8.33.909'], ['Signals intel', 'Relay 2.3.66.510'], ['Satellite', 'Pass 18.0.77.01']];
+const KM_PER_DEG_MIN = 111.0; // just under the true 111.19, for a conservative latitude pre-check
+
+// Lon/lat bounds of a border polygon (all rings), cached per polygon. Polygons whose rings jump
+// the antimeridian are flagged and always rasterised, as rasterize() unwraps them itself.
+const polyBounds = new WeakMap();
+function boundsOfPoly(poly) {
+  let b = polyBounds.get(poly);
+  if (b) return b;
+  let w = Infinity, s = Infinity, e = -Infinity, n = -Infinity, wraps = false;
+  for (const ring of poly) {
+    for (let i = 0; i < ring.length; i++) {
+      const x = ring[i][0], y = ring[i][1];
+      if (x < w) w = x; if (x > e) e = x; if (y < s) s = y; if (y > n) n = y;
+      if (i && Math.abs(x - ring[i - 1][0]) > 180) wraps = true;
+    }
+  }
+  polyBounds.set(poly, (b = { w, s, e, n, wraps }));
+  return b;
+}
+function boundsOfNation(nation) {
+  let b = polyBounds.get(nation.features);
+  if (b) return b;
+  b = { w: Infinity, s: Infinity, e: -Infinity, n: -Infinity, wraps: false };
+  for (const f of nation.features) {
+    const g = f.geometry;
+    for (const poly of g.type === 'Polygon' ? [g.coordinates] : g.coordinates) {
+      const p = boundsOfPoly(poly);
+      b.w = Math.min(b.w, p.w); b.s = Math.min(b.s, p.s); b.e = Math.max(b.e, p.e); b.n = Math.max(b.n, p.n);
+      b.wraps ||= p.wraps;
+    }
+  }
+  polyBounds.set(nation.features, b);
+  return b;
+}
 
 export class CityLayer {
   constructor(scene, world, game) {
@@ -56,7 +90,12 @@ export class CityLayer {
 
   nearest(lat, lon, maxKm) {
     let best = null, bd = maxKm;
-    for (const c of CITIES) { const d = haversine({ lat, lon }, c); if (d < bd) { bd = d; best = c; } }
+    const p = { lat, lon };
+    for (const c of CITIES) {
+      if (Math.abs(c.lat - lat) * KM_PER_DEG_MIN >= bd) continue; // cannot beat bd
+      const d = haversine(p, c);
+      if (d < bd) { bd = d; best = c; }
+    }
     return best;
   }
 
@@ -73,7 +112,13 @@ export class CityLayer {
     this.buildMat.opacity = fade;
     const t = { lat: cam.lat, lon: cam.lon };
     const range = 140 + dist * EARTH_KM * 2.2;
-    const want = CITIES.map((c) => [c, haversine(t, c)]).filter(([, d]) => d < range).sort((a, b) => a[1] - b[1]).slice(0, 3).map(([c]) => c);
+    const near = [];
+    for (const c of CITIES) {
+      if (Math.abs(c.lat - t.lat) * KM_PER_DEG_MIN >= range) continue;
+      const d = haversine(t, c);
+      if (d < range) near.push([c, d]);
+    }
+    const want = near.sort((a, b) => a[1] - b[1]).slice(0, 3).map(([c]) => c);
     let builtThisFrame = false;
     for (const c of want) {
       if (!this.built.has(c.name) && !builtThisFrame) { this.built.set(c.name, this.build(c)); builtThisFrame = true; }
@@ -82,6 +127,8 @@ export class CityLayer {
       const keep = want.some((c) => c.name === name);
       if (!keep && this.built.size > 4) { this.group.remove(obj.group); obj.dispose(); this.built.delete(name); continue; }
       obj.group.visible = keep;
+      // The procedural lights and blocks are only filled in once they are actually shown.
+      if (!realCity && obj.materialize) { obj.materialize(); obj.materialize = null; }
       for (const o of obj.procedural) o.visible = !realCity;
       // Over the real city, strikes come from the simulation (craters, rubble, fires), so the
       // illustrative strike markers step aside.
@@ -103,12 +150,18 @@ export class CityLayer {
     const M = 512;
     const polys = [];
     for (const n of this.world.nations.slice(1)) {
-      const [[w, s], [e, nn]] = n.bounds;
-      const wraps = e < w;
-      if (!wraps && (e < bbox[0] || w > bbox[2] || nn < bbox[1] || s > bbox[3])) continue;
+      // Planar vertex bounds (what rasterize() draws), cached; cheaper than the spherical
+      // n.bounds, which is computed lazily for every nation on first use.
+      const nb = boundsOfNation(n);
+      if (!nb.wraps && (nb.e < bbox[0] || nb.w > bbox[2] || nb.n < bbox[1] || nb.s > bbox[3])) continue;
       for (const f of n.features) {
         const g = f.geometry;
-        for (const poly of g.type === 'Polygon' ? [g.coordinates] : g.coordinates) polys.push({ rings: poly, value: 1 });
+        for (const poly of g.type === 'Polygon' ? [g.coordinates] : g.coordinates) {
+          // A polygon wholly outside the raster cannot set a pixel; skip it before rasterising.
+          const pb = boundsOfPoly(poly);
+          if (!pb.wraps && (pb.e < bbox[0] || pb.w > bbox[2] || pb.n < bbox[1] || pb.s > bbox[3])) continue;
+          polys.push({ rings: poly, value: 1 });
+        }
       }
     }
     const mask = rasterize(polys, M, M, bbox);
@@ -125,9 +178,12 @@ export class CityLayer {
       const r = Math.hypot(x, y);
       let d = Math.exp(-((r / (Rk * 0.55)) ** 2));
       const a = Math.atan2(y, x);
-      for (const arm of arms) {
-        let da = Math.abs(a - arm); da = Math.min(da, Math.PI * 2 - da);
-        d += Math.exp(-(((da * r) / 1.1) ** 2)) * Math.exp(-r / (Rk * 1.3)) * 0.55;
+      const fall = Math.exp(-r / (Rk * 1.3));
+      for (let k = 0; k < arms.length; k++) {
+        let da = Math.abs(a - arms[k]); da = Math.min(da, Math.PI * 2 - da);
+        // Beyond this the arm term underflows to exactly 0 and would add nothing.
+        if (da * r > 30.05) continue;
+        d += Math.exp(-(((da * r) / 1.1) ** 2)) * fall * 0.55;
       }
       return Math.min(1, d) * (0.45 + 0.75 * noise(x / 2.6 + 50, y / 2.6 + 50));
     };
@@ -144,8 +200,11 @@ export class CityLayer {
             const [x0, y0] = P(u0, v), [x1, y1] = P(u1, v);
             const mx = (x0 + x1) / 2, my = (y0 + y1) / 2;
             if (Math.hypot(mx, my) > reach || R() > keepP) continue;
+            // Same draws as before: the threshold roll is taken whether or not the point is land.
+            const roll = R();
+            if (!land(mx, my)) continue;
             const d = density(mx, my);
-            if (d < thr + R() * 0.22 || !land(mx, my)) continue;
+            if (d < thr + roll * 0.22) continue;
             segs.push([x0, y0, x1, y1, 0, d]);
           }
         }
@@ -177,14 +236,16 @@ export class CityLayer {
       }
     }
 
-    // Lights along roads and scattered through dense blocks.
-    const pos = [], bri = [], warm = [];
+    // Lights along roads and scattered through dense blocks. Stored as local km offsets; they are
+    // projected onto the globe only if the procedural layer is ever shown.
+    let roadLights = 0;
+    for (const [x0, y0, x1, y1, kind] of segs) roadLights += Math.max(1, Math.floor(Math.hypot(x1 - x0, y1 - y0) / (kind ? 0.045 : 0.075)));
+    const cap = roadLights + Math.ceil(Math.min(30000, roadLights * 0.6));
+    const lx = new Float64Array(cap), ly = new Float64Array(cap), bri = new Float32Array(cap), warm = new Float32Array(cap);
+    let nl = 0;
+    const push = (x, y, b, w) => { lx[nl] = x; ly[nl] = y; bri[nl] = b; warm[nl] = w; nl++; };
     const v = new THREE.Vector3();
-    const push = (x, y, b, w) => {
-      const lat = city.lat + y / 111.2, lon = city.lon + x / (111.2 * cosφ);
-      ll2v(lat, lon, 1 + 0.004 / EARTH_KM, v);
-      pos.push(v.x, v.y, v.z); bri.push(b); warm.push(w);
-    };
+    const lightPos = (i, out) => ll2v(city.lat + ly[i] / 111.2, city.lon + lx[i] / (111.2 * cosφ), 1 + 0.004 / EARTH_KM, out);
     for (const [x0, y0, x1, y1, kind, d] of segs) {
       const len = Math.hypot(x1 - x0, y1 - y0);
       const step = kind ? 0.045 : 0.075;
@@ -194,18 +255,17 @@ export class CityLayer {
         push(x0 + (x1 - x0) * t + (R() - 0.5) * 0.02, y0 + (y1 - y0) * t + (R() - 0.5) * 0.02, kind ? 0.8 + R() * 0.2 : 0.3 + d * 0.6, kind ? 1 : R() < 0.12 ? 1 : 0);
       }
     }
-    const scatter = Math.min(30000, pos.length / 3 * 0.6);
+    const scatter = Math.min(30000, nl * 0.6);
     for (let k = 0; k < scatter; k++) {
       const r = Rk * 1.2 * Math.sqrt(R()), a = R() * Math.PI * 2;
       const x = Math.cos(a) * r, y = Math.sin(a) * r;
+      const roll = R();
+      if (!land(x, y)) continue;
       const d = density(x, y);
-      if (R() > d || !land(x, y)) continue;
+      if (roll > d) continue;
       push(x, y, d * 0.5, 0);
     }
     const geo = new THREE.BufferGeometry();
-    geo.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
-    geo.setAttribute('aB', new THREE.Float32BufferAttribute(bri, 1));
-    geo.setAttribute('aW', new THREE.Float32BufferAttribute(warm, 1));
     const points = new THREE.Points(geo, this.pointMat);
     points.frustumCulled = false;
 
@@ -233,24 +293,34 @@ export class CityLayer {
     boxGeo.translate(0, 0.5, 0);
     const inst = new THREE.InstancedMesh(boxGeo, this.buildMat, Math.max(1, boxes.length));
     inst.count = boxes.length;
-    const m = new THREE.Matrix4(), up = new THREE.Vector3(), east = new THREE.Vector3(), north = new THREE.Vector3(), ax = new THREE.Vector3(), az = new THREE.Vector3(), col = new THREE.Color();
-    boxes.forEach(([x, y, w, dpt, h, tone], idx) => {
-      const lat = city.lat + y / 111.2, lon = city.lon + x / (111.2 * cosφ);
-      ll2v(lat, lon, 1, v);
-      up.copy(v).normalize();
-      east.set(Math.cos(lon * DEG), 0, -Math.sin(lon * DEG));
-      north.crossVectors(up, east);
-      ax.copy(east).multiplyScalar(ct).addScaledVector(north, st);
-      az.crossVectors(ax, up);
-      const k = 1 / EARTH_KM;
-      m.makeBasis(ax.multiplyScalar(w * k), up.clone().multiplyScalar(h * k), az.multiplyScalar(dpt * k));
-      m.setPosition(v);
-      inst.setMatrixAt(idx, m);
-      inst.setColorAt(idx, col.setScalar(tone));
-    });
-    inst.instanceMatrix.needsUpdate = true;
-    if (inst.instanceColor) inst.instanceColor.needsUpdate = true;
     inst.frustumCulled = false;
+
+    // Fills the light positions and block matrices — skipped entirely while the real
+    // OpenStreetMap city is drawn instead (update() calls it the first time it is needed).
+    const materialize = () => {
+      const pos = new Float32Array(nl * 3);
+      for (let i = 0; i < nl; i++) { lightPos(i, v); pos[i * 3] = v.x; pos[i * 3 + 1] = v.y; pos[i * 3 + 2] = v.z; }
+      geo.setAttribute('position', new THREE.BufferAttribute(pos, 3));
+      geo.setAttribute('aB', new THREE.BufferAttribute(bri.slice(0, nl), 1));
+      geo.setAttribute('aW', new THREE.BufferAttribute(warm.slice(0, nl), 1));
+      const m = new THREE.Matrix4(), up = new THREE.Vector3(), east = new THREE.Vector3(), north = new THREE.Vector3(), ax = new THREE.Vector3(), az = new THREE.Vector3(), col = new THREE.Color();
+      boxes.forEach(([x, y, w, dpt, h, tone], idx) => {
+        const lat = city.lat + y / 111.2, lon = city.lon + x / (111.2 * cosφ);
+        ll2v(lat, lon, 1, v);
+        up.copy(v).normalize();
+        east.set(Math.cos(lon * DEG), 0, -Math.sin(lon * DEG));
+        north.crossVectors(up, east);
+        ax.copy(east).multiplyScalar(ct).addScaledVector(north, st);
+        az.crossVectors(ax, up);
+        const k = 1 / EARTH_KM;
+        m.makeBasis(ax.multiplyScalar(w * k), up.clone().multiplyScalar(h * k), az.multiplyScalar(dpt * k));
+        m.setPosition(v);
+        inst.setMatrixAt(idx, m);
+        inst.setColorAt(idx, col.setScalar(tone));
+      });
+      inst.instanceMatrix.needsUpdate = true;
+      if (inst.instanceColor) inst.instanceColor.needsUpdate = true;
+    };
 
     const group = new THREE.Group();
     group.add(points, inst);
@@ -270,11 +340,11 @@ export class CityLayer {
         return p;
       });
       const lp = [];
-      const count = Math.min(150, pos.length / 3);
+      const count = Math.min(150, nl);
       for (let k = 0; k < count; k++) {
-        const idx = Math.floor(R() * (pos.length / 3)) * 3;
+        lightPos(Math.floor(R() * nl), v);
         const tgt = nodes[k % nodes.length];
-        lp.push(pos[idx], pos[idx + 1], pos[idx + 2], tgt.x, tgt.y, tgt.z);
+        lp.push(v.x, v.y, v.z, tgt.x, tgt.y, tgt.z);
       }
       for (let k = 0; k < nodes.length - 1; k++) lp.push(nodes[k].x, nodes[k].y, nodes[k].z, nodes[k + 1].x, nodes[k + 1].y, nodes[k + 1].z);
       const lg = new THREE.BufferGeometry();
@@ -303,7 +373,7 @@ export class CityLayer {
 
     this.group.add(group);
     return {
-      group, labels, procedural: [points, inst],
+      group, labels, procedural: [points, inst], materialize,
       dispose: () => { geo.dispose(); boxGeo.dispose(); inst.dispose(); extra.forEach((g) => g.dispose()); },
     };
   }
