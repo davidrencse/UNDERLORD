@@ -128,6 +128,17 @@ export const PROJECTS = {
   dockyards: { name: 'Dockyards', sector: 'manufacturing', gain: 0.01, facilities: { dockyards: 1 }, days: 240, desc: '+1 dockyard · +1% manufacturing capacity' },
   dockyardComplex: { name: 'Dockyard complex', sector: 'manufacturing', gain: 0.05, facilities: { dockyards: 5 }, days: 540, desc: '+5 dockyards · +5% manufacturing capacity' },
   powerGrid: { name: 'Power grid', sector: 'energy', gain: 0.02, all: 0.002, days: 300, desc: '+2% energy output · +0.2% capacity nationwide' },
+  // Modern-day buildings, after the Hearts of Iron IV construction list and its present-day mods:
+  // what a state builds when it is preparing for a war it has not started yet.
+  refinery: { name: 'Oil refinery', sector: 'energy', gain: 0.02, facilities: { refineries: 1 }, days: 330, desc: '+40 kt of fuel a day · +2% energy output' },
+  synthFuel: { name: 'Synthetic fuel plant', sector: 'energy', gain: 0.01, capital: 0.002, facilities: { synth: 1 }, days: 600, desc: '+25 kt of fuel a day without crude · +1% energy output' },
+  fuelDepot: { name: 'Fuel depot', capital: 0.0005, facilities: { silos: 1 }, days: 150, desc: '+8 days of fuel storage' },
+  railYard: { name: 'Rail yard', all: 0.003, capital: 0.001, facilities: { railYards: 1 }, days: 270, desc: '+4% supply throughput · +0.3% capacity nationwide' },
+  researchCampus: { name: 'Research campus', sector: 'technology', gain: 0.015, city: true, facilities: { campuses: 1 }, days: 420, desc: '+6% research speed · +1.5% technology capacity · city only' },
+  dataCentre: { name: 'Data centre', sector: 'technology', gain: 0.02, facilities: { dataCentres: 1 }, days: 240, desc: '+3% research speed · +2% technology capacity' },
+  airDefence: { name: 'Air defence network', capital: 0.0025, facilities: { airDefence: 1 }, days: 300, desc: 'Blunts enemy air support over your own ground' },
+  desalination: { name: 'Desalination plant', sector: 'agriculture', gain: 0.03, capital: 0.0008, days: 330, desc: '+3% farm output and food self-sufficiency' },
+  miningComplex: { name: 'Mining complex', sector: 'mining', gain: 0.04, days: 390, desc: '+4% mining output and metals self-sufficiency' },
 };
 export const MAX_PROJECTS = 12;
 
@@ -139,7 +150,11 @@ function projectSpec(E, kind) {
     const s = E.sectors[p.sector];
     cost += s.cap * p.gain * SECTOR[p.sector].va * SECTOR[p.sector].capOut;
   }
-  if (p.all) cost += Object.values(E.sectors).reduce((t, s) => t + (s.id === 'defence' ? 0 : s.cap * SECTOR[s.id].va), 0) * p.all * 2.2;
+  const civilianVA = () => Object.values(E.sectors).reduce((t, s) => t + (s.id === 'defence' ? 0 : s.cap * SECTOR[s.id].va), 0);
+  if (p.all) cost += civilianVA() * p.all * 2.2;
+  // `capital` buys something that is not sector capacity — storage, track, launchers — so it is
+  // priced against the economy without adding to it.
+  if (p.capital) cost += civilianVA() * p.capital * 2.2;
   return { cost: Math.max(0.01, cost) };
 }
 
@@ -280,14 +295,23 @@ export function createEconomy(n, fx0 = {}) {
     acc: null,
     LF0, LF: LF0, lfIdx: 1, popG, u0, u: u0, k, soldiers0: null, held0: null, uMin: Math.max(1.2, u0 * 0.35),
     P: 1, pi: pi0, pi0, anchor: pi0, target, cred: cred0, cred0, vatShock: 0, tariffShock: 0,
-    i: i0, i0, iSet: i0, rStar: i0 - pi0 - 0.5 * (pi0 - target), rReal0: i0 - pi0,
+    i: i0, i0, iSet: i0, rStar: i0 - pi0 - 0.5 * (pi0 - target), rReal0: i0 - pi0, taylor: i0,
     xr: 1, rxHist: [1], reserves: base.res ?? imports0 / 3, safe, risk0, risk: risk0, yld: yld0, rD: rD0, rFx: rFx0, mat: base.mat,
     fxShare: base.fx, debtLoc: (debtPct / 100) * Y0 * (1 - base.fx), debtFx: (debtPct / 100) * Y0 * base.fx, defaultMem: 0,
     tax, tax0: { ...tax }, taxCooldown: {}, tariff: base.tariff, tariff0: base.tariff,
     rev0: rev, revPct: rev0, deficit: base.def, deficit0: base.def, interestPct: interest0, monetized: 0,
+    // The baseline split, so the budget and finance tabs read correctly before the first month runs.
+    revParts: [['Foreign aid', rev.aid], ['Income tax', rev.income], ['Consumption tax', rev.consumption], ['Corporate tax', rev.corporate], ['Resource rents', rev.rent], ['Tariffs', rev.tariff], ['Other revenue', rev.other]],
+    // Spending and the external accounts at the starting position: no subsidies, war operations,
+    // migration programmes or construction projects are running yet, so spending is the budget itself.
+    spendPct: Object.values(lines).reduce((t, l) => t + l.value, 0) + (n.budget?.other ?? 0),
+    subsidyPct: 0, warOps: 0, migrationSpend: 0, constrRatio: 1, projSpendPct: 0,
+    imports: (Mg0 + Mc0) * Y0, ca: ((Xg0 + Xc0 - Mg0 - Mc0) * Y0 - (debtPct / 100) * Y0 * base.fx * rFx0 / 100) / Y0 * 100, pressure: 0,
     ka0: null, ca0: null, restr0: 0, restr: 0, sanctionLoss: 0,
     milCap: milFunded * 1.08, milFunded, milUsed: milFunded, milFactories: Math.max(1, Math.min(MAX_FACTORIES, Math.round(milFunded))), milLimit: 'budget',
-    projects: [], completedSites: [], facilities: { airports: 0, dockyards: 0 }, nextProject: 1, aiTimer: 0, warMonths: 0, peaceMonths: 0,
+    projects: [], completedSites: [],
+    facilities: { airports: 0, dockyards: 0, refineries: 0, synth: 0, silos: 0, railYards: 0, campuses: 0, dataCentres: 0, airDefence: 0 },
+    nextProject: 1, aiTimer: 0, warMonths: 0, peaceMonths: 0,
     hist: [], growth: g0, alerts: [], lawFx: { stab: 0, ws: 0, pp: 0 }, ruleBroken: false, devalued: false,
     inflParts: [], growthParts: [], months: 0, r: rng(9173 + n.index * 31),
     boosts: [], // timed effects from events: { kind, c, until, v }
@@ -795,6 +819,10 @@ function completeProject(n, p) {
   if (def.facilities) for (const [kind, count] of Object.entries(def.facilities)) E.facilities[kind] += count;
 }
 
+// City-only projects need a site. The capital is one for nearly every country; if it is not,
+// queueProject refuses and the AI simply builds something else next month.
+const capitalSite = (n) => (n.capital ? { lat: n.capital.lat, lon: n.capital.lon } : null);
+
 function aiEconomy(g, n, atWar) {
   const E = n.econ;
   if (atWar) { E.warMonths++; E.peaceMonths = 0; } else { E.peaceMonths++; E.warMonths = 0; }
@@ -807,10 +835,23 @@ function aiEconomy(g, n, atWar) {
   }
   if (n.gdp < 25 || E.projects.length >= 2 || E.r() > 0.3) return;
   let kind = 'civilianFactory';
+  const fuel = n.fuel;
+  const short = fuel && fuel.use > 0 && (fuel.ratio < 0.98 || fuel.stock < fuel.cap * 0.3);
   if ((atWar || n.warSupport > 60) && E.milFunded > E.milCap * 0.95) kind = 'militaryFactory';
+  // A country burning more fuel than it can supply builds its way out: crude if it has any,
+  // synthetic if it has none.
+  else if (short) kind = E.comm.energy.self > 0.6 ? 'refinery' : E.r() < 0.6 ? 'synthFuel' : 'fuelDepot';
   else if (E.comm.energy.r < 0.99 || E.comm.energy.self < 0.5) kind = E.r() < 0.5 ? 'powerGenerator' : 'powerGrid';
-  else { const pick = E.r(); kind = pick < 0.5 ? 'civilianFactory' : pick < 0.7 ? 'infrastructure' : pick < 0.85 ? 'airports' : 'civilianComplex'; }
-  queueProject(n, kind);
+  else if (atWar && E.r() < 0.3) kind = E.r() < 0.6 ? 'railYard' : 'airDefence';
+  else if (E.comm.metals.self < 0.5 && E.r() < 0.25) kind = 'miningComplex';
+  else if (E.comm.food.self < 0.6 && E.r() < 0.25) kind = 'desalination';
+  else {
+    const pick = E.r();
+    const rich = (n.wt?.gdpPerCapita ?? 10000) > 25000;
+    kind = pick < 0.45 ? 'civilianFactory' : pick < 0.6 ? 'infrastructure' : pick < 0.72 ? 'airports'
+      : pick < 0.84 ? 'civilianComplex' : rich ? (pick < 0.92 ? 'dataCentre' : 'researchCampus') : 'civilianFactory';
+  }
+  queueProject(n, kind, kind === 'researchCampus' ? capitalSite(n) : null);
 }
 
 // ---------------------------------------------------------------------------------- alerts

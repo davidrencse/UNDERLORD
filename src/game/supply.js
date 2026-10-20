@@ -54,9 +54,15 @@ export function seedHubs(nations, cities, bases) {
   return hubs;
 }
 
+// Rail yards raise what every hub a country holds can push. Kept as a per-nation multiplier so
+// that hubCap keeps its signature: it is read from a hundred places.
+const HUB_BONUS = new Float64Array(256).fill(1);
+export const setHubBonus = (owner, mult) => { if (owner >= 0 && owner < 256) HUB_BONUS[owner] = mult; };
+export const hubBonus = (owner) => HUB_BONUS[owner] ?? 1;
+
 export function hubCap(h, time) {
   if (h.readyAt > time) return 0;
-  return LEVEL_CAP[h.level] * (h.damagedUntil > time ? 0.5 : 1);
+  return LEVEL_CAP[h.level] * (h.damagedUntil > time ? 0.5 : 1) * (HUB_BONUS[h.ctrl] ?? 1);
 }
 
 // Fraction of the route from p to hub h that runs through ground held by an enemy of `owner`.

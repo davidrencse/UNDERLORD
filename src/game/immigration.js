@@ -74,19 +74,27 @@ export function matchesTargets(cohort, targets, m) {
     && (!targets.routes?.length || targets.routes.includes(cohort.route));
 }
 
+// Statutory limits and political choices persist when delivery funding is cut.
+const STATUTORY = new Set(['admissions', 'family', 'asylum', 'coercion', 'polarization', 'nationalist', 'naturalization', 'diplomacy']);
+// Political balances run either way; the rest are shares, and admissions lines may be raised above one.
+const SIGNED = new Set(['polarization', 'nationalist', 'diplomacy']);
+const RAISABLE = new Set(['admissions', 'family', 'asylum', 'naturalization']);
+const BASE_KEYS = Object.keys(BASE);
+
 export function policyFor(m, cohort) {
   const p = { ...BASE };
+  let keys = BASE_KEYS;
   for (const program of m.programs) {
     if (program.targets && (!cohort || !matchesTargets(cohort, program.targets, m))) continue;
     for (const [key, value] of Object.entries(program.effects)) {
       if (key === 'spending') continue;
-      // Statutory limits and political choices persist when delivery funding is cut.
-      const statutory = ['admissions', 'family', 'asylum', 'coercion', 'polarization', 'nationalist', 'naturalization', 'diplomacy'].includes(key);
-      p[key] = (p[key] ?? 0) + value * (statutory ? 1 : m.funding);
+      // A program may introduce a modifier the baseline does not carry.
+      if (keys === BASE_KEYS && !(key in BASE)) keys = null;
+      p[key] = (p[key] ?? 0) + value * (STATUTORY.has(key) ? 1 : m.funding);
     }
   }
-  for (const key of Object.keys(p)) p[key] = ['polarization', 'nationalist', 'diplomacy'].includes(key)
-    ? clamp(p[key], -1, 1) : clamp(p[key], 0, ['admissions', 'family', 'asylum', 'naturalization'].includes(key) ? 2.5 : 1);
+  for (const key of keys ?? Object.keys(p)) p[key] = SIGNED.has(key)
+    ? clamp(p[key], -1, 1) : clamp(p[key], 0, RAISABLE.has(key) ? 2.5 : 1);
   return p;
 }
 
@@ -153,7 +161,11 @@ export function immigrationMonth(g, n, naturalGrowth = 0) {
   const migrants = m.cohorts.filter((c) => c.generation === 'first');
   const originCount = new Set(migrants.map((c) => c.origin)).size;
   const byId = new Map(m.cohorts.map((c) => [c.id, c]));
-  const cohortPolicies = new Map(m.cohorts.map((c) => [c.id, policyFor(m, c)]));
+  // Only a program that targets cohorts can make their policies differ; otherwise every cohort
+  // reads the one policy already computed above. Policies are read, never written.
+  const targeted = m.programs.some((program) => program.targets);
+  const cohortPolicies = targeted ? new Map(m.cohorts.map((c) => [c.id, policyFor(m, c)])) : null;
+  const policyOf = (c) => (cohortPolicies ? cohortPolicies.get(c.id) : p);
   const demand = n.pop * 1e6 * .004 / 12;
   const spending = Math.max(0, sum(m.programs, (program) => program.effects.spending ?? 0));
   m.spending = spending * m.funding;
@@ -161,7 +173,7 @@ export function immigrationMonth(g, n, naturalGrowth = 0) {
   const delivery = clamp(p.administration * fiscalDelivery + .2, .1, 1);
   const serviceLoad = clamp(1 / Math.max(1, m.housingUse), .3, 1);
   m.integrationCapacity = clamp(sum(m.cohorts, (c) => {
-    const pc = cohortPolicies.get(c.id);
+    const pc = policyOf(c);
     return c.population * (pc.language + pc.credentials + pc.services) / 3;
   }) / Math.max(1, before) * delivery * serviceLoad);
   for (const c of m.cohorts) {
@@ -169,7 +181,7 @@ export function immigrationMonth(g, n, naturalGrowth = 0) {
     c.inflows = 0; c.outflows = 0; c.asylumDecisions = 0; c.naturalizations = 0;
   }
   for (const c of m.cohorts) {
-    const pc = cohortPolicies.get(c.id);
+    const pc = policyOf(c);
     const native = c.generation !== 'first';
     const nonCitizen = Math.max(0, c.population - c.citizens);
     if (!native) {
@@ -242,7 +254,7 @@ export function immigrationMonth(g, n, naturalGrowth = 0) {
     + (p.prevention - .3) * .2 * delivery + (p.services - .5) * .15 * delivery + (p.justice - .5) * .15 * m.trust);
   m.safety += (safetyTarget - m.safety) * .06;
   m.reporting = clamp(.3 + m.trust * .35 + p.services * .2);
-  m.diplomaticStanding = sum(m.cohorts, (c) => cohortPolicies.get(c.id).diplomacy * c.population) / total;
+  m.diplomaticStanding = sum(m.cohorts, (c) => policyOf(c).diplomacy * c.population) / total;
   m.flows = flow;
   m.history.push({ month, population: total, ...flow, housingUse: m.housingUse, employment: employed, spending: m.spending });
   if (m.history.length > 24) m.history.shift();
@@ -261,7 +273,7 @@ export function immigrationMonth(g, n, naturalGrowth = 0) {
   if (g.addOpinion) for (const origin of new Set(migrants.map((c) => c.origin))) {
     const partner = g.world?.byIso?.get(origin);
     const residents = migrants.filter((c) => c.origin === origin);
-    const cooperation = sum(residents, (c) => cohortPolicies.get(c.id).diplomacy * c.population) / Math.max(1, sum(residents, (c) => c.population));
+    const cooperation = sum(residents, (c) => policyOf(c).diplomacy * c.population) / Math.max(1, sum(residents, (c) => c.population));
     if (partner && cooperation) g.addOpinion(n.index, partner.index, cooperation * .15);
   }
   immigrationEvents(g, n);

@@ -1,6 +1,7 @@
 import { esc, flagHTML, int } from './format.js';
 import { ImmigrationPanel } from './immigrationPanel.js';
 import { DemographicDoctrinePanel } from './demographicDoctrinePanel.js';
+import { manpowerSectionHTML } from './manpowerSection.js';
 
 const known = (value) => value != null && value !== '';
 
@@ -53,6 +54,8 @@ export class DemographicsScreen {
     const n = this.ctx.game.nations[this.nation];
     const population = this.el.querySelector('.demo-total');
     if (population && n) population.textContent = int(Math.round(n.pop * 1e6));
+    const living = this.el.querySelector('.mp-section');
+    if (living && n) living.outerHTML = manpowerSectionHTML(n);
     this.immigrationPanel.render();
     this.doctrinePanel.render();
   }
@@ -76,8 +79,8 @@ export class DemographicsScreen {
           </label>
         </div>
         <section class="demo-population" aria-label="Population">
-          <div><h2>Population</h2><div class="demo-total num">${int(p.population)}</div><p>Game population baseline · ${esc(n.iso3)}</p></div>
-          <div class="demo-context"><p>Population follows the game baseline. Age, settlement and health figures use the most recent available World Bank observation through 2024.</p></div>
+          <div><h2>Population</h2><div class="demo-total num">${int(p.population)}</div><p>Living population · ${esc(n.iso3)}</p></div>
+          <div class="demo-context"><p>Population moves month by month on the country's own fertility, mortality and migration. The starting pyramid, age bands, settlement and health figures come from the most recent available World Bank observation through 2024.</p></div>
         </section>
         <section class="demo-age demo-section" aria-label="Age structure">
           <h2>Age structure</h2>
@@ -85,6 +88,7 @@ export class DemographicsScreen {
             <div class="demo-agekey">${[['0–14', 0], ['15–64', 1], ['65+', 2]].map(([label, index]) => `<div><span class="age-swatch age-${index}"></span><span>${label}</span><b class="num">${p.ages[index].value.toFixed(1)}%</b></div>`).join('')}</div>
             <p class="demo-observation">World Bank · ${p.ages[0].year}</p>` : '<p class="demo-empty">Age structure is not available for this country.</p>'}
         </section>
+        ${manpowerSectionHTML(n)}
         <div class="demo-columns">
           <section class="demo-section">
             <h2>Population profile</h2>

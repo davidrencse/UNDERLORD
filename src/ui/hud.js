@@ -22,21 +22,21 @@ export class Hud {
         <button class="nation-chip" data-act="own"></button>
         <div class="res"></div>
         <div class="spacer"></div>
-        <button class="tb-btn" data-act="focus">National trajectory <kbd class="num">T</kbd></button>
+        <button class="tb-btn" data-act="focus">Trajectory <kbd class="num">T</kbd></button>
         <button class="tb-btn" data-act="economy">Economy <kbd class="num">E</kbd></button>
         <button class="tb-btn" data-act="military">Military <kbd class="num">U</kbd></button>
         <button class="tb-btn" data-act="dossier">Overview <kbd class="num">O</kbd></button>
         <div class="clock">
           <div class="date num"></div>
           <div class="speeds">
-            <button class="pause" aria-label="Pause or resume">❚❚</button>
+            <button class="pause" aria-label="Pause or resume">Hold</button>
             ${[1, 2, 3, 4, 5].map((s) => `<button data-speed="${s}" aria-label="Speed ${s}"></button>`).join('')}
           </div>
         </div>
       </header>
       <div class="bottom" hidden>
         <div class="modes" role="group" aria-label="Map mode">${MAP_MODES.map((m) => `<button data-mode="${m.id}">${m.label}</button>`).join('')}</div>
-        <div class="coords"><div class="c1 num"></div><div class="c2"></div></div>
+        <div class="coords"><div class="c2"></div><div class="c1 num"></div></div>
       </div>
       <div class="news" hidden></div>
       <div class="wordmark" hidden>UNDERLORD</div>
@@ -77,6 +77,7 @@ export class Hud {
       else if (e.key === 'b' || e.key === 'B') ctx.openMilitary('designer', true);
       else if (e.key === 'p' || e.key === 'P') ctx.openMilitary('production', true);
       else if (e.key === 'i' || e.key === 'I') ctx.openMilitary('research', true);
+      else if (e.key === 'k' || e.key === 'K') ctx.openMilitary('command', true);
       else if (e.key === 'o' || e.key === 'O') ctx.openDossier(ctx.selectedNation() ?? game.player);
       else if (e.key === 'Escape') ctx.escape();
     });
@@ -100,11 +101,18 @@ export class Hud {
     this._set('chip', this.chipEl, `${flagHTML(n)}<div><div class="nm">${esc(n.name)}</div><div class="ld">${esc(n.leader)}</div></div>`);
     const gain = game.ppGain(n);
     const divs = this.ctx.units.of(n.index).reduce((a, s) => a + (s.type === 'air' || s.type === 'fleet' || s.type === 'sub' || s.type === 'carrier' ? 0 : s.divs), 0);
-    const meter = (v) => `<div class="meter"><i style="width:${v.toFixed(0)}%"></i></div>`;
+    // Eight discrete cells rather than a smooth bar: the reading is an instrument's, and a
+    // value under an eighth still lights one cell so "nearly none" never looks like none.
+    const blocks = (v, tone = '') => {
+      const lit = v <= 0 ? 0 : Math.max(1, Math.round((v / 100) * 8));
+      return `<div class="blocks${tone ? ` ${tone}` : ''}">${Array.from({ length: 8 }, (_, i) => `<i${i < lit ? ' class="on"' : ''}></i>`).join('')}</div>`;
+    };
+    // Stability and war support are the two figures that bite when they fall, so they warn.
+    const tone = (v) => (v < 25 ? 'bad' : v < 50 ? 'caution' : '');
     this._set('res', this.resEl, `
       <div class="r" title="Political power, spent on decisions, focuses and diplomacy"><span class="k">Political power</span><span class="v ${gain >= 0 ? 'up' : 'down'}">${Math.floor(n.pp)}<small>${signed(gain, 2)}</small></span></div>
-      <div class="r"><span class="k">Stability</span><span class="v">${n.stability.toFixed(0)}%</span>${meter(n.stability)}</div>
-      <div class="r"><span class="k">War support</span><span class="v">${n.warSupport.toFixed(0)}%</span>${meter(n.warSupport)}</div>
+      <div class="r"><span class="k">Stability</span><span class="v">${n.stability.toFixed(0)}<small>%</small></span>${blocks(n.stability, tone(n.stability))}</div>
+      <div class="r"><span class="k">War support</span><span class="v">${n.warSupport.toFixed(0)}<small>%</small></span>${blocks(n.warSupport, tone(n.warSupport))}</div>
       <div class="r"><span class="k">GDP</span><span class="v ${n.growth >= 0 ? 'up' : 'down'}">${money(n.gdp)}<small>${signed(n.growth)}%</small></span></div>
       <div class="r"><span class="k">Manpower</span><span class="v">${compact(n.manpower * 1000)}</span></div>
       <div class="r"><span class="k">Divisions</span><span class="v">${Math.round(divs * 10) / 10}</span></div>`);
@@ -116,7 +124,8 @@ export class Hud {
     const { game } = this.ctx;
     this._set('date', this.dateEl, `${day(game.time)}<small>${hour(game.time)}</small>`);
     this.pauseEl.classList.toggle('paused', game.paused);
-    const label = game.paused ? 'Paused' : '❚❚';
+    // The key is named for what it does, and for what it is doing once it is lit.
+    const label = game.paused ? 'Holding' : 'Hold';
     if (this._html.pause !== label) { this._html.pause = label; this.pauseEl.textContent = label; }
     for (const b of this.speedEls) b.classList.toggle('on', +b.dataset.speed <= game.speed);
     void SPEEDS;

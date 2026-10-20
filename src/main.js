@@ -27,6 +27,7 @@ import { SupplyScreen } from './ui/supplyScreen.js';
 import { DesignerScreen } from './ui/designerScreen.js';
 import { ProductionScreen } from './ui/productionScreen.js';
 import { ResearchScreen } from './ui/researchScreen.js';
+import { CommandScreen } from './ui/commandScreen.js';
 import { ConstructionMap } from './ui/constructionMap.js';
 import { TECH } from './game/research.js';
 import { ll2v, interpolate, haversine, destination } from './util/geo.js';
@@ -161,7 +162,8 @@ const supply = new SupplyScreen(ui, ctx);
 const designer = new DesignerScreen(ui, ctx);
 const production = new ProductionScreen(ui, ctx);
 const research = new ResearchScreen(ui, ctx);
-const military = { supply, designer, production, research };
+const command = new CommandScreen(ui, ctx);
+const military = { supply, designer, production, research, command };
 let milTab = 'supply';
 
 // The supply, army designer and production screens share one tab strip. A hotkey toggles its
@@ -400,14 +402,23 @@ let dayUIQueued = false;
 function flushDayUI() {
   dayUIQueued = false;
   if (game.player == null) return;
-  hud.renderTop(); countryPanel.render(); focus.render(); economy.render(); supply.render(); production.render(); research.render();
+  hud.renderTop(); countryPanel.render(); focus.render(); economy.render(); supply.render(); production.render(); research.render(); command.render();
   construction.render();
   demographics.render();
 }
+function queueUI() {
+  if (game.player != null && !dayUIQueued) { dayUIQueued = true; queueMicrotask(flushDayUI); }
+}
 game.on('day', () => {
   if (mode) rebuildLUT();
-  if (game.player != null && !dayUIQueued) { dayUIQueued = true; queueMicrotask(flushDayUI); }
+  queueUI();
 });
+// Anything a decision changes on the spot: political power spent, a focus finished, a division
+// deployed. With time paused no day ever ticks, so without these the top bar would hold the
+// figures the player had before they acted.
+game.on('nation', queueUI);
+game.on('focus', queueUI);
+game.on('units', queueUI);
 game.on('wars', () => rebuildLUT());
 game.on('event', () => events.next());
 game.on('raise', () => setTimeout(() => hud.renderTop(), 0));

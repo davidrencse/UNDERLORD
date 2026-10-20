@@ -65,11 +65,14 @@ export function budgetDelta(budget) {
   return round(Object.entries(budget.lines).reduce((sum, [id, line]) => sum + line.value - budget.baseline[id], 0));
 }
 
+// The weights never change, so the per-line pairs are read once rather than on every nation-day.
+const LINE_WEIGHTS = BUDGET_LINES.map((line) => [line.id, Object.entries(line.weight)]);
+
 export function budgetEffects(budget) {
   const effects = { growth: 0, stab: 0, ws: 0, pp: 0 };
-  for (const line of BUDGET_LINES) {
-    const delta = budget.lines[line.id].value - budget.baseline[line.id];
-    for (const [key, factor] of Object.entries(line.weight)) effects[key] += delta * factor;
+  for (const [id, weights] of LINE_WEIGHTS) {
+    const delta = budget.lines[id].value - budget.baseline[id];
+    for (const [key, factor] of weights) effects[key] += delta * factor;
   }
   return effects;
 }

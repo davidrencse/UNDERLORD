@@ -129,33 +129,45 @@ export function autoAssign(n, want, eff = PRODUCTION.startEff) {
   P.lines = [];
   const shares = total ? CLASS_IDS.map((c) => ({ c, f: (P.factories * (want[c] ?? 0)) / total })).filter((x) => x.f > 0).sort((a, b) => b.f - a.f) : [{ c: 'rifles', f: P.factories }];
   // Every class in demand gets at least one factory before the big shares are filled, so cheap
-  // essentials (rifles, missiles, drones) are never crowded out by tanks.
-  const floor = Math.min(shares.length, P.factories);
-  let left = P.factories - floor;
-  const scale = left / Math.max(1e-9, shares.slice(0, floor).reduce((t, x) => t + Math.max(0, x.f - 1), 0));
-  // Lines beyond one per class, for second models and for shares too big for one line.
-  let spare = PRODUCTION.maxLines - floor;
-  for (const [i, { c, f }] of shares.entries()) {
+  // essentials (rifles, missiles, drones) are never crowded out by tanks. The line budget runs out
+  // before the factories do, so one line per class is opened first and the big shares grow on top
+  // of those: a class last in the order still keeps its factory.
+  const classes = [];
+  for (const { c, f } of shares) {
+    if (P.lines.length >= PRODUCTION.maxLines || P.lines.length >= P.factories) break;
     const list = buildsOf(P, c);
-    if (!list.length || i >= floor) continue;
+    if (!list.length) continue;
+    const first = newLine(P, list[0][0], 1, keep.get(list[0][0]) ?? eff);
+    P.lines.push(first);
+    classes.push({ f, list, first });
+  }
+  let left = P.factories - P.lines.length;
+  const scale = left / Math.max(1e-9, classes.reduce((t, x) => t + Math.max(0, x.f - 1), 0));
+  for (const { f, list, first } of classes) {
+    if (left <= 0) break;
     const extra = Math.min(left, Math.round(Math.max(0, f - 1) * Math.min(1, scale)));
-    left -= extra;
-    const k = 1 + extra;
-    const parts = splitByWeight(k, list.slice(0, 1 + Math.max(0, spare)));
-    spare -= parts.length - 1;
-    for (const [id, share] of parts) {
+    if (!extra) continue;
+    // The class's other models, and a share too big for one line, take the lines still unused.
+    const spare = PRODUCTION.maxLines - P.lines.length;
+    const parts = splitByWeight(1 + extra, list.slice(0, Math.min(list.length, 1 + spare)));
+    for (const [i, [id, share]] of parts.entries()) {
       // Big shares are split over several lines, as no line can use more than its maximum.
-      let r = share;
+      let r = i === 0 ? share - first.factories : share;
+      if (i === 0) {
+        const add = Math.min(r, PRODUCTION.maxPerLine - first.factories);
+        first.factories += add; r -= add; left -= add;
+      }
+      // Factories the line budget cannot take stay in `left` for the sweep below.
       while (r > 0 && P.lines.length < PRODUCTION.maxLines) {
         const take = Math.min(r, PRODUCTION.maxPerLine);
-        if (P.lines.some((l) => l.model === id)) spare--;
         P.lines.push(newLine(P, id, take, keep.get(id) ?? eff));
-        r -= take;
+        r -= take; left -= take;
       }
     }
   }
   P.lines.sort((a, b) => b.factories - a.factories);
-  if (left > 0 && P.lines.length) for (const l of P.lines) { const add = Math.min(left, PRODUCTION.maxPerLine - l.factories); l.factories += add; left -= add; }
+  // Whatever the per-line maximum and the line budget left unassigned goes to the lines with room.
+  if (left > 0) for (const l of P.lines) { const add = Math.min(left, PRODUCTION.maxPerLine - l.factories); l.factories += add; left -= add; if (left <= 0) break; }
 }
 
 export function addLine(n, id) {
@@ -234,7 +246,7 @@ export function drawClass(n, cls, amount) {
   if (!(amount > 0)) return 1;
   const P = n.production;
   const take = Math.min(amount, Math.max(0, P.stock[cls] ?? 0));
-  P.stock[cls] -= take;
+  P.stock[cls] = (P.stock[cls] ?? 0) - take;
   P.used[cls] = (P.used[cls] ?? 0) + take;
   // What was asked for, met or not: the true rate of fire production has to keep up with.
   P.asked = P.asked ?? {};

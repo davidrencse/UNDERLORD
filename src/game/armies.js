@@ -578,10 +578,14 @@ export class Armies {
     // Enemy divisions within 60 km of the front.
     const pts = a.front.segs.flat().filter((_, i) => i % 3 === 0);
     if (!pts.length) return;
+    // The front's own latitude band rejects distant divisions before the per-point test; taking it
+    // from one end of the line instead would miss the defenders along a front longer than the band.
+    let loLat = Infinity, hiLat = -Infinity;
+    for (const p of pts) { if (p.lat < loLat) loLat = p.lat; if (p.lat > hiLat) hiLat = p.lat; }
     let theirs = 0;
     for (const o of this.units.stacks) {
       if (!LAND.has(o.type) || !g.atWar(n.index, o.owner)) continue;
-      if (Math.abs(o.lat - pts[0].lat) > 25) continue;
+      if (o.lat < loLat - 0.6 || o.lat > hiLat + 0.6) continue;
       if (pts.some((p) => Math.abs(p.lat - o.lat) < 0.6 && haversine(p, o) < 60)) theirs += pow(o, 'def') * (1 + 0.4 * (o.dig ?? 0));
     }
     const ratio = mine / Math.max(0.5, theirs);

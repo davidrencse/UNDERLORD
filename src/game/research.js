@@ -134,7 +134,17 @@ export const slotsFor = (n) => clamp(1 + Math.floor(Math.log2(1 + rdBn(n) / RESE
 // head (the depth of the engineering base) both count.
 export function speedFor(n) {
   const perCapita = n.wt?.gdpPerCapita ?? (n.pop > 0 ? (n.gdp * 1000) / n.pop : 10000);
-  return clamp(0.45 + 0.3 * Math.min(1.6, eduPct(n) / 4.5) + 0.25 * Math.min(1.6, perCapita / 40000), 0.4, 1.4);
+  const base = clamp(0.45 + 0.3 * Math.min(1.6, eduPct(n) / 4.5) + 0.25 * Math.min(1.6, perCapita / 40000), 0.4, 1.4);
+  return base * (1 + builtResearch(n));
+}
+
+// Research campuses and data centres, with diminishing returns: the tenth campus is worth less
+// than the first because the people to staff it are the scarce part.
+export function builtResearch(n) {
+  const f = n.econ?.facilities;
+  if (!f) return 0;
+  const weighted = (f.campuses ?? 0) * 0.06 + (f.dataCentres ?? 0) * 0.03;
+  return weighted > 0 ? 0.6 * Math.log1p(weighted / 0.6) : 0;
 }
 
 // Cost multiplier for researching ahead of a technology's year.

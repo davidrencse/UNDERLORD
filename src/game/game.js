@@ -8,6 +8,10 @@ import { createEconomy, createWorldEconomy, economyMonth, economyStab, adjustDeb
 import { IMMIGRATION_TREES } from '../data/immigration.js';
 import { DEMOGRAPHIC_TREE } from '../data/demographicDoctrine.js';
 import { createDemographicPolicy, applyDemographicEffect, demographicMonth } from './demographicPolicy.js';
+import { createPopulation, createConscription, populationMonth, manpowerTick, manpowerCap, conscriptionFx } from './population.js';
+import { createFuel, fuelDay } from './fuel.js';
+import { setHubBonus } from './supply.js';
+import { createCommand, commandMonth } from './commanders.js';
 import { createImmigration, applyImmigration, immigrationPartyDrift } from './immigration.js';
 
 export const START = Date.UTC(2025, 0, 20, 12);
@@ -15,6 +19,7 @@ export const SPEEDS = [0, 2, 6, 16, 40, 120]; // game hours per real second
 
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 const DAY = 86400000;
+const EMPTY = [];
 const pairKey = (a, b) => (a < b ? `${a}|${b}` : `${b}|${a}`);
 
 // A Set of pairKey strings that also mirrors its contents into a 256×256 byte matrix, so hot paths
@@ -138,7 +143,11 @@ export class Game {
       n.spirits = [...(n.spirits || [])];
       n.timed = [];
       n.mods = { stab: 0, ws: 0, growth: 0, pp: 0, infl: 0 };
-      n.manpower = Math.round(n.pop * 1000 * 0.012 * (0.5 + n.warSupport / 100));
+      n.population = createPopulation(n);
+      n.fuel = createFuel(n);
+      n.command = createCommand(this, n, r);
+      n.conscription = createConscription(n);
+      n.manpower = Math.round(manpowerCap(n) * 0.7);
       n.casualties = 0;
       n.exhaustion = 0;
       n.cooldowns = {};
@@ -261,6 +270,7 @@ export class Game {
     const gm = this.globalMods;
     if (gm) for (let i = 0; i < gm.length; i++) addFx(fx, gm[i].mod);
     if (n.econ) addOwn(fx, n.econ.lawFx);
+    if (n.conscription) addOwn(fx, conscriptionFx(n));
     return fx;
   }
   _econStab(n) { return clamp((n.growth - 2) * 1.2, -8, 5) - Math.max(0, n.inflation - 5) * 0.25 - Math.max(0, n.unemployment - 7) * 0.5; }
@@ -405,7 +415,9 @@ export class Game {
     const wsTarget = clamp(n.base.ws + fx.ws + fiscal.ws + (defensive ? 12 : 0) - exhaustion, 0, 100);
     n.warSupport += (wsTarget - n.warSupport) * 0.025;
 
-    n.manpower = Math.min(n.manpower + n.pop * 0.012 * (0.4 + n.warSupport / 100), n.pop * 1000 * 0.03);
+    n.manpower = manpowerTick(n, n.manpower);
+    fuelDay(this, n, this.formations?.() ?? EMPTY);
+    setHubBonus(n.index, 1 + 0.04 * (n.econ?.facilities?.railYards ?? 0)); // rail yards push more through every hub
 
     // Power centres drift toward a loyalty the state's condition can sustain.
     for (const p of n.powerCentres) {
@@ -416,7 +428,7 @@ export class Game {
     this._partyDrift(n);
     if (politicalSystem(n) === 'party' && n.politics.congress && this.time >= parseDay(n.politics.congress)) this.holdPartyCongress(n);
     this._focusTick(n);
-    if (this._monthStart) demographicMonth(this, n);
+    if (this._monthStart) { populationMonth(this, n); commandMonth(this, n, this.formations?.() ?? EMPTY); demographicMonth(this, n); }
     if (n.justifying && this.time >= n.justifying.until) {
       n.wargoals.add(n.justifying.target);
       if (n.index === this.player) this.log(`War goal against ${this.nations[n.justifying.target].name} is ready.`, { nation: n.index, kind: 'diplo' });

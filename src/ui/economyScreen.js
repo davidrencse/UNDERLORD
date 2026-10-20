@@ -359,7 +359,11 @@ export class EconomyScreen {
           <div><span>Running</span><b class="num ${E.milLimit !== 'budget' ? 'warn' : ''}">${E.milUsed.toFixed(0)}</b><small>limited by ${limit}</small></div>
           <div><span>On production lines</span><b class="num">${E.milFactories}</b><small><button class="lnk" data-production>Open production</button></small></div>
         </div>
-        <p class="sup-note">Constructed transport facilities: ${E.facilities.airports} airports · ${E.facilities.dockyards} dockyards. Their projects also expand services or manufacturing capacity.</p>
+        <p class="sup-note">Built facilities: ${[
+          [E.facilities.airports, 'airport'], [E.facilities.dockyards, 'dockyard'], [E.facilities.refineries, 'oil refinery'],
+          [E.facilities.synth, 'synthetic fuel plant'], [E.facilities.silos, 'fuel depot'], [E.facilities.railYards, 'rail yard'],
+          [E.facilities.campuses, 'research campus'], [E.facilities.dataCentres, 'data centre'], [E.facilities.airDefence, 'air defence site'],
+        ].filter(([k]) => k > 0).map(([k, label]) => `${k} ${label}${k === 1 ? '' : 's'}`).join(' · ') || 'none yet'}. Most also expand the capacity of the sector that runs them.</p>
       </section>`;
   }
 

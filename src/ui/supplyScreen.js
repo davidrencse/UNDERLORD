@@ -39,10 +39,15 @@ export class SupplyScreen {
     const A = units.armies, d = b.dataset;
     if (d.x !== undefined) { this.close(); return; }
     if (d.miltab) { this.ctx.openMilitary(d.miltab); return; }
-    if (d.build !== undefined || d.map !== undefined) {
+    if (d.build !== undefined) {
+      // Hubs are sited on the construction screen, with the rest of what a country builds.
+      this.close();
+      this.ctx.openConstruction('supplyHub');
+      return;
+    }
+    if (d.map !== undefined) {
       this.close();
       this.ctx.setMode(6);
-      if (d.build !== undefined) this.ctx.setTool({ kind: 'hub' });
       return;
     }
     if (d.upgrade) {
@@ -147,7 +152,7 @@ export class SupplyScreen {
           ${flagHTML(n)}
           <div><h1>Supply</h1><p>${esc(n.name)} logistics · ${day(t)}</p></div>
           <div class="sup-actions">
-            <button class="btn signal" data-build ${n.pp < SUPPLY.buildPP ? 'disabled' : ''}>Build supply hub <small class="num">${SUPPLY.buildPP} PP</small></button>
+            <button class="btn signal" data-build ${n.pp < SUPPLY.buildPP ? 'disabled' : ''} title="Opens the construction screen with the supply hub selected">Build supply hub <small class="num">${SUPPLY.buildPP} PP</small></button>
             <button class="btn" data-map>Supply map</button>
           </div>
         </header>

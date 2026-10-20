@@ -6,6 +6,8 @@ import { clamp } from './game.js';
 import { landSpeed, kitOf, URBAN_DEFENCE } from './orbat.js';
 import { doctrine } from '../world/unitModels.js';
 import { Armies, ordinal } from './armies.js';
+import { fuelFactor } from './fuel.js';
+import { commandFactor } from './commanders.js';
 import { seedTemplates, defaultTemplate, sideProfile, strike, restat } from './templates.js';
 import { seedProduction, needOf, draw, drawClass, optionsFor } from './production.js';
 import { seedResearch, hasTech, ratings } from './research.js';
@@ -87,6 +89,8 @@ export class Units {
     game.recount();
     // People in uniform per nation, for the economy: soldiers raised beyond the starting army
     // leave the civilian labour force.
+    // The fuel layer needs the formation list; it lives here, so hand the game a reader for it.
+    game.formations = () => this.stacks;
     game.uniformedAll = () => {
       const out = new Float64Array(256);
       for (const s of this.stacks) if (TYPES[s.type].domain === 'land') out[s.owner] += s.divs * s.str * (s.tpl?.stats.men ?? TYPES[s.type].men);
@@ -412,6 +416,7 @@ export class Units {
       const ahead = interpolate(s, dest, Math.min(1, 6 / Math.max(6, haversine(s, dest))));
       const contested = s.state !== 'retreat' && (g.atWar(control[pixelOf(s.lat, s.lon)], s.owner) || g.atWar(control[pixelOf(ahead.lat, ahead.lon)], s.owner));
       speed = landSpeed(s.type, { contested, urban: !!cityAt(s), org: s.org }) * (s.state === 'retreat' ? 0.5 : 1);
+      speed *= fuelFactor(g.nations[s.owner], s.type); // dry tanks crawl
       s.contested = contested;
     }
     const remain = haversine(s, dest);
@@ -485,8 +490,9 @@ export class Units {
     if (!movers.length) return;
     const grid = this._grid ??= new Map();
     grid.clear();
-    // Integer cell key; floor() is applied to the shifted coordinate exactly as the string key did.
-    const key = (lat, lon) => (Math.floor(lat) + 200) * 1000 + Math.floor(lon) + 400;
+    // Integer cell key. The longitude cell wraps, so the column either side of the 180th meridian
+    // neighbours the other, and formations across it see each other as anywhere else.
+    const key = (lat, lon) => (Math.floor(lat) + 200) * 1000 + (((Math.floor(lon) + 180) % 360) + 360) % 360;
     for (const s of this.stacks) {
       if (TYPES[s.type].domain === 'air' || !g.enemiesOf(s.owner).size) continue;
       const k = key(s.lat, s.lon);
@@ -519,6 +525,13 @@ export class Units {
     grid.clear();
   }
 
+  // A built air-defence network covers the country that paid for it, over ground it still holds.
+  _nationalAA(owner, at) {
+    const net = this.game.nations[owner]?.econ?.facilities?.airDefence ?? 0;
+    if (!net) return 0;
+    return this.world.control[pixelOf(at.lat, at.lon)] === owner ? Math.min(0.45, 0.12 * net) : 0;
+  }
+
   // Air support bonus for `owner` at a battle; the enemy's air defence (`aa`) cancels part of it.
   _support(owner, at, aa = 0) {
     let wings = 0;
@@ -536,7 +549,8 @@ export class Units {
     const def = [...b.def].filter((s) => this.byId.has(s.id));
     if (!att.length || !def.length) { this._endBattle(b); return; }
     // Each division's weight: size, strength, organisation, experience and supply.
-    const weight = (s) => s.divs * s.str * (0.3 + 0.7 * s.org) * (0.7 + s.exp) * (0.4 + 0.6 * s.supply);
+    const weight = (s) => s.divs * s.str * (0.3 + 0.7 * s.org) * (0.7 + s.exp) * (0.4 + 0.6 * s.supply)
+      * fuelFactor(this.game.nations[s.owner], s.type) * commandFactor(this.game, s);
     let pa, pd, holdD = false, holdA = false;
     const urban = b.dom === 'land' ? cityAt(b) : null;
     if (b.dom === 'land' && att[0].tpl && def[0].tpl) {
@@ -551,8 +565,8 @@ export class Units {
       const plan = att.reduce((t, s) => t + s.plan * (1 + s.tpl.stats.fx.plan) * weight(s), 0) / Math.max(1e-9, A.w);
       const dig = def.reduce((t, s) => t + s.dig * weight(s), 0) / Math.max(1e-9, D.w);
       const brk = Math.min(1.6, Math.max(0.6, Math.sqrt(A.brk / Math.max(1, D.def))));
-      pa = A.w * onD.value * (1 + plan) * brk * this._support(att[0].owner, b, D.aa);
-      pd = D.w * onA.value * 1.25 * (1 + 0.5 * dig) * this._support(def[0].owner, b, A.aa) * (urban ? URBAN_DEFENCE : 1);
+      pa = A.w * onD.value * (1 + plan) * brk * this._support(att[0].owner, b, Math.min(0.95, D.aa + this._nationalAA(def[0].owner, b)));
+      pd = D.w * onA.value * 1.25 * (1 + 0.5 * dig) * this._support(def[0].owner, b, Math.min(0.95, A.aa + this._nationalAA(att[0].owner, b))) * (urban ? URBAN_DEFENCE : 1);
     } else {
       const pow = (list, role) => list.reduce((t, s) => t + weight(s) * TYPES[s.type][role] * (role === 'atk' ? 1 + s.plan : 1 + 0.5 * s.dig), 0);
       pa = pow(att, 'atk') * this._support(att[0].owner, b);

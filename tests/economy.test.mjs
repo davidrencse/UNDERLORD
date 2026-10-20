@@ -140,11 +140,15 @@ test('construction projects are paid from the infrastructure budget and add capa
 
 test('construction catalog includes the requested buildings and offices require a city', async () => {
   const { n } = await fresh();
-  assert.deepEqual(Object.keys(PROJECTS), [
+  const catalog = Object.keys(PROJECTS);
+  for (const kind of [
     'militaryFactory', 'militaryComplex', 'civilianFactory', 'civilianComplex',
     'offices', 'officeComplex', 'airports', 'infrastructure', 'powerGenerator',
     'nuclearGenerator', 'dockyards', 'dockyardComplex', 'powerGrid',
-  ]);
+    // modern-day additions
+    'refinery', 'synthFuel', 'fuelDepot', 'railYard', 'researchCampus', 'dataCentre',
+    'airDefence', 'desalination', 'miningComplex',
+  ]) assert.ok(catalog.includes(kind), `${kind} is missing from the construction catalog`);
   const fra = n('FRA');
   assert.match(queueProject(fra, 'offices', { lat: 46, lon: 2 }), /city/i);
   assert.match(queueProject(fra, 'officeComplex'), /city/i);
