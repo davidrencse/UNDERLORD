@@ -3,7 +3,8 @@ import { PACTS, RIVALRIES, WARS, FACTIONS } from '../data/nations.js';
 import { haversine, rng } from '../util/geo.js';
 import { CRISES } from './crises.js';
 import { politicalPressure, politicalSystem } from './politicalSystems.js';
-import { createBudget, budgetDelta, budgetEffects, dailyBudgetBorrowing } from './budget.js';
+import { createBudget, budgetEffects } from './budget.js';
+import { createEconomy, createWorldEconomy, economyMonth, economyStab, adjustDebt, applyEconomyFx, dailyEconomy } from './economy.js';
 
 export const START = Date.UTC(2025, 0, 20, 12);
 export const SPEEDS = [0, 2, 6, 16, 40, 120]; // game hours per real second
@@ -106,6 +107,7 @@ export class Game {
     this.day = 0;
     this._initNations();
     this._initRelations();
+    createWorldEconomy(this);
     for (const w of WARS) {
       const a = world.byKey.get(w.attacker), d = world.byKey.get(w.defender);
       if (a && d) this.startWar(a.index, d.index, { name: w.name, silent: true, since: Date.parse(w.since) });
@@ -157,6 +159,8 @@ export class Game {
       const tree = FOCUS_TREES[n.iso3] ? n.iso3 : 'generic';
       n.focus = { tree, done: new Set(), current: null };
 
+      // The economy calibrates itself to the starting growth and inflation, net of spirits.
+      n.econ = createEconomy(n, this.effects(n));
       // Capture the starting equilibrium so the world holds still until something changes it.
       const fx = this.effects(n);
       n.base = {
@@ -250,6 +254,7 @@ export class Game {
     if (timed) for (let i = 0; i < timed.length; i++) { const t = timed[i]; if (t.mod) addOwn(fx, t.mod); else addFx(fx, SPIRITS[t.id]?.fx); }
     const gm = this.globalMods;
     if (gm) for (let i = 0; i < gm.length; i++) addFx(fx, gm[i].mod);
+    if (n.econ) addOwn(fx, n.econ.lawFx);
     return fx;
   }
   _econStab(n) { return clamp((n.growth - 2) * 1.2, -8, 5) - Math.max(0, n.inflation - 5) * 0.25 - Math.max(0, n.unemployment - 7) * 0.5; }
@@ -366,6 +371,8 @@ export class Game {
     if (this.history.length > 400) this.history.shift();
     this.globalMods = this.globalMods.filter((g) => g.until > this.time);
     this._monthStart = new Date(this.time).getUTCDate() === 1;
+    // The economy settles monthly: GDP, prices, jobs, the budget, debt and trade.
+    if (this._monthStart) economyMonth(this);
     for (const n of this.live()) this._dailyNation(n);
     this._monthStart = undefined;
     CRISES.daily(this);
@@ -381,18 +388,11 @@ export class Game {
     n.pp = clamp(n.pp + this.ppGain(n, fx), 0, 2000);
 
     const atWar = this.warsOf(n.index).length > 0;
-    const growthTarget = n.base.growth + fx.growth + fiscal.growth + (n.stability - 50) * 0.02 + (atWar && !n.spirits.includes('war_economy') ? -0.8 : 0) - (n.sanctionedBy.size ? 0.6 : 0);
-    n.growth += (growthTarget - n.growth) * 0.03;
-    n.gdp *= 1 + n.growth / 100 / 365;
-    n.inflation += (Math.max(-2, n.base.infl + fx.infl + (atWar ? 1.5 : 0)) - n.inflation) * 0.02;
-    n.unemployment += (clamp(n.base.unemp - (n.growth - n.base.growth0) * 0.6, 1, 45) - n.unemployment) * 0.01;
-    n.interest += (clamp(n.inflation + 1 + Math.max(0, n.debt - 100) * 0.02, 0, 60) - n.interest) * 0.01;
-    const deficit = budgetDelta(n.budget) + (this.hasSpirit(n, 'stimulus') ? 2 : 0) - (this.hasSpirit(n, 'austerity') ? 2.5 : 0) + (atWar ? 1.5 : 0);
-    n.debt = clamp(n.debt + dailyBudgetBorrowing(n, deficit) - n.debt * (n.growth / 100) / 365 * 0.5, 0, 400);
+    dailyEconomy(this, n);
 
     const exhaustion = clamp(n.casualties / Math.max(1, n.pop * 1000) * 2500, 0, 30);
     n.exhaustion = exhaustion;
-    const stabTarget = clamp(n.base.stab + fx.stab + fiscal.stab + this._econStab(n) + this._loyaltyStab(n) + politicalPressure(n).stab - exhaustion * 0.4, 0, 100);
+    const stabTarget = clamp(n.base.stab + fx.stab + fiscal.stab + this._econStab(n) + economyStab(n) + this._loyaltyStab(n) + politicalPressure(n).stab - exhaustion * 0.4, 0, 100);
     n.stability += (stabTarget - n.stability) * 0.025;
     const enemies = this.enemiesOf(n.index);
     const defensive = enemies.size &&this.wars.some((w) => w.d.has(n.index));
@@ -540,7 +540,8 @@ export class Game {
     if (fx.wsNow) n.warSupport = clamp(n.warSupport + fx.wsNow, 0, 100);
     if (fx.growth) n.mods.growth += fx.growth;
     if (fx.infl) n.mods.infl += fx.infl;
-    if (fx.debt) n.debt = Math.max(0, n.debt + fx.debt);
+    if (fx.debt) adjustDebt(n, fx.debt);
+    if (fx.econ) applyEconomyFx(this, n, fx.econ);
     if (fx.defPct) {
       n.defPct += fx.defPct;
       if (n.budget) n.budget.lines.military.value = n.defPct;

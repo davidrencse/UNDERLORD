@@ -15,8 +15,11 @@ import { Hud } from './ui/hud.js';
 import { CountryPanel, UnitPanel } from './ui/panels.js';
 import { DiplomacyMenu } from './ui/diplomacyMenu.js';
 import { DossierScreen, FocusScreen, EventModal, StartScreen } from './ui/screens.js';
-import { LedgerScreen } from './ui/ledger.js';
+import { EconomyScreen } from './ui/economyScreen.js';
 import { ArmyBar } from './ui/armyBar.js';
+import { SupplyScreen } from './ui/supplyScreen.js';
+import { DesignerScreen } from './ui/designerScreen.js';
+import { ProductionScreen } from './ui/productionScreen.js';
 import { ll2v, interpolate, haversine, destination } from './util/geo.js';
 
 const loading = document.createElement('div');
@@ -71,9 +74,11 @@ const ctx = {
   game, world, units, cam, camera, cityLayer,
   selectedNation: () => selectedNation,
   selectNation, selectUnits, setMode,
-  openDossier: (i) => { if (i != null) { focus.close(); ledger.close(); dossier.open(i); } },
-  openFocus: () => { if (game.player != null) { dossier.close(); ledger.close(); focus.open(); } },
-  openLedger: () => { if (game.player != null) { dossier.close(); focus.close(); ledger.open(); } },
+  openDossier: (i) => { if (i != null) { focus.close(); economy.close(); closeMilitary(); dossier.open(i); } },
+  openFocus: () => { if (game.player != null) { dossier.close(); economy.close(); closeMilitary(); focus.open(); } },
+  openLedger: () => openEconomy('budget'),
+  openEconomy: (tab, toggle) => openEconomy(tab, toggle),
+  openMilitary,
   toast: (t) => hud.toast(t),
   refreshTop: () => hud.renderTop(),
   refreshClock: () => hud.renderClock(),
@@ -132,9 +137,33 @@ const diplomacyMenu = new DiplomacyMenu(ui, { ...ctx, countryPanel });
 const unitPanel = new UnitPanel(ui, ctx);
 const dossier = new DossierScreen(ui, ctx);
 const focus = new FocusScreen(ui, ctx);
-const ledger = new LedgerScreen(ui, ctx);
+const economy = new EconomyScreen(ui, ctx);
 const events = new EventModal(ui, ctx);
 const armyBar = new ArmyBar(ui, ctx);
+const supply = new SupplyScreen(ui, ctx);
+const designer = new DesignerScreen(ui, ctx);
+const production = new ProductionScreen(ui, ctx);
+const military = { supply, designer, production };
+let milTab = 'supply';
+
+// The supply, army designer and production screens share one tab strip. A hotkey toggles its
+// own tab; the top-bar button reopens whichever tab was last used.
+function openMilitary(tab = milTab, toggle = false) {
+  if (game.player == null) return;
+  const screen = military[tab];
+  if (toggle && !screen.el.hidden) { screen.close(); return; }
+  dossier.close(); focus.close(); economy.close();
+  for (const [k, s] of Object.entries(military)) if (k !== tab) s.close();
+  milTab = tab;
+  screen.open();
+}
+// The economy screen's tabs: Overview (E), Budget (L), Construction, Industry, Trade, Finance, Laws.
+function openEconomy(tab, toggle = false) {
+  if (game.player == null) return;
+  dossier.close(); focus.close(); closeMilitary();
+  economy.open(tab, toggle);
+}
+function closeMilitary() { for (const s of Object.values(military)) s.close(); }
 const start = new StartScreen(ui, ctx);
 loading.remove();
 
@@ -145,14 +174,15 @@ function rebuildLUT() {
   const enemies = game.player != null ? game.enemiesOf(game.player) : new Set();
   for (const n of game.nations.slice(1)) {
     let v = 0.5;
-    if (mode === 1) v = IDEOLOGIES[n.ideology].shade * 0.7 + hash01(n.index) * 0.28;
+    if (mode === 6) v = 0.5;
+    else if (mode === 1) v = IDEOLOGIES[n.ideology].shade * 0.7 + hash01(n.index) * 0.28;
     else if (mode === 2) v = n.faction === 'NATO' ? 0.88 : n.faction === 'CSTO' ? 0.42 : n.faction === 'AES' ? 0.6 : 0.16;
     else if (mode === 3) v = n.stability / 100;
     else if (mode === 4) v = n.warSupport / 100;
     else if (mode === 5) v = Math.max(0, Math.min(1, (Math.log10((n.gdp * 1e3) / Math.max(0.01, n.pop)) - 2.6) / 2.3));
     if (n.inert) v = 0.08;
     let flag = 0;
-    if (game.player != null && mode > 0) {
+    if (game.player != null && mode > 0 && mode !== 6) {
       if (n.index === game.player) flag = 255;
       else if (enemies.has(n.index)) flag = 90;
       else if (game.allied(n.index, game.player)) flag = 170;
@@ -162,7 +192,8 @@ function rebuildLUT() {
   }
   globe.refreshLUT();
 }
-function setMode(m) { diplomacyMenu.close(); mode = m; globe.uniforms.uMode.value = m; hud.setMode(m); rebuildLUT(); }
+// Supply (6) keeps the terrain globe and draws hub reach and supply routes over it.
+function setMode(m) { diplomacyMenu.close(); mode = m; globe.uniforms.uMode.value = m === 6 ? 0 : m; overlay.mode = m; hud.setMode(m); rebuildLUT(); }
 
 // ------------------------------------------------------------------ selection
 function selectNation(i, fly = false) {
@@ -257,7 +288,8 @@ function escape() {
   else if (!diplomacyMenu.el.hidden) diplomacyMenu.close();
   else if (!dossier.el.hidden) dossier.close();
   else if (!focus.el.hidden) focus.close();
-  else if (!ledger.el.hidden) ledger.close();
+  else if (!economy.el.hidden) economy.close();
+  else if (Object.values(military).some((s) => !s.el.hidden)) closeMilitary();
   else if (selectedUnits.length) selectUnits([]);
   else if (selectedNation != null) countryPanel.close();
 }
@@ -333,7 +365,7 @@ let dayUIQueued = false;
 function flushDayUI() {
   dayUIQueued = false;
   if (game.player == null) return;
-  hud.renderTop(); countryPanel.render(); focus.render(); ledger.render();
+  hud.renderTop(); countryPanel.render(); focus.render(); economy.render(); supply.render(); production.render();
 }
 game.on('day', () => {
   if (mode) rebuildLUT();

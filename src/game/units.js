@@ -6,6 +6,8 @@ import { clamp } from './game.js';
 import { landSpeed, kitOf, URBAN_DEFENCE } from './orbat.js';
 import { doctrine } from '../world/unitModels.js';
 import { Armies, ordinal } from './armies.js';
+import { seedTemplates, defaultTemplate, sideProfile, strike, restat } from './templates.js';
+import { seedProduction, needOf, draw, drawClass, optionsFor } from './production.js';
 
 export const TYPES = {
   armor: { label: 'Armoured', domain: 'land', speed: 9, atk: 1.55, def: 1.0, men: 15000 },
@@ -81,7 +83,17 @@ export class Units {
     this.wrecks = []; // destroyed vehicles left where they fell: { lat, lon, kind, yaw, time }
     this._nums = new Map();
     game.recount();
+    // People in uniform per nation, for the economy: soldiers raised beyond the starting army
+    // leave the civilian labour force.
+    game.uniformedAll = () => {
+      const out = new Float64Array(256);
+      for (const s of this.stacks) if (TYPES[s.type].domain === 'land') out[s.owner] += s.divs * s.str * (s.tpl?.stats.men ?? TYPES[s.type].men);
+      for (const q of this.armies?.queue ?? []) out[q.owner] += q.men * 1000;
+      return out;
+    };
+    for (const n of game.live()) seedTemplates(n);
     this._generate();
+    this._seedProduction();
     this.armies = new Armies(this);
     this.armies.bootstrap();
     game.on('hour', () => this.hourTick());
@@ -96,11 +108,14 @@ export class Units {
       id: this.nextId++, owner: spec.owner, type: spec.type, divs: spec.divs, lat: spec.lat, lon: spec.lon, name: spec.name,
       str: spec.str ?? 1, org: spec.org ?? 1, path: [], state: 'idle', exp: spec.exp ?? 0.3, kit: null,
       planes: spec.planes, ships: spec.ships, num: spec.num ?? 0,
-      army: 0, supply: 1, dig: 0, plan: 0, slot: null, hub: 0, manual: false,
+      army: 0, supply: 1, dig: 0, plan: 0, slot: null, hub: 0, manual: false, tpl: null,
       prev: undefined, battle: undefined, contested: undefined, attack: undefined, wreckAcc: undefined, _face: undefined, _faceAt: undefined,
     };
     for (const k in spec) if (!(k in s)) s[k] = spec[k];
     if (TYPES[s.type].domain === 'land') {
+      // Every land formation follows a division template; its counter and models follow the template.
+      s.tpl = spec.tpl ?? defaultTemplate(this.game.nations[s.owner], s.type);
+      if (spec.tpl) s.type = spec.tpl.stats.type;
       if (!s.num) s.num = this.nextNum(s.owner, s.type);
       if (!s.name) s.name = `${s.divs >= 1.6 ? ROMAN(s.num) : ORD(s.num)} ${TYPES[s.type].label} ${ECHELON_NAME[echelon(s.divs)]}`;
     }
@@ -118,6 +133,33 @@ export class Units {
     return v;
   }
   of(i) { return this.stacks.filter((s) => s.owner === i); }
+
+  // After a template is edited: divisions on it take its new type (and so counters and models).
+  retemplate(owner, tpl) {
+    const doc = doctrine(this.game.nations[owner].iso3);
+    for (const s of this.stacks) if (s.owner === owner && s.tpl === tpl && s.type !== tpl.stats.type) { s.type = tpl.stats.type; s.kit = kitOf(s, doc); }
+  }
+
+  // Each nation's stockpile and production lines, sized to the army it starts with.
+  _seedProduction() {
+    const fielded = new Map();
+    for (const s of this.stacks) {
+      if (!s.tpl) continue;
+      let f = fielded.get(s.owner);
+      if (!f) fielded.set(s.owner, (f = {}));
+      for (const [e, v] of Object.entries(needOf(s.tpl, s.divs))) f[e] = (f[e] ?? 0) + v;
+      // Consumables held in reserve: two months of artillery fire and a month of drone sorties.
+      f.ammo = (f.ammo ?? 0) + s.tpl.stats.ammo * s.divs * 24 * 60;
+      f.fpv = (f.fpv ?? 0) + s.tpl.stats.fpv * s.divs * 24 * 30;
+    }
+    const g = this.game, byIso = this.world.byIso;
+    for (const n of g.live()) {
+      const isPartner = (iso) => { const m = byIso.get(iso); return !!m && m !== n && g.allied(n.index, m.index); };
+      seedProduction(n, fielded.get(n.index) ?? {}, optionsFor(n, isPartner, g.time));
+      // Templates are rated by the standard of the equipment the nation builds.
+      for (const t of n.templates) restat(t, n.production.quality);
+    }
+  }
 
   // ---------------------------------------------------------------- order of battle
   _generate() {
@@ -312,7 +354,7 @@ export class Units {
       if (s.state === 'moving' || s.state === 'retreat') this._move(s);
       const land = TYPES[s.type].domain === 'land';
       if (land) {
-        if (s.state === 'idle') s.dig = Math.min(1, s.dig + DIG_PER_HOUR * (s.slot && this.armies.byId.get(s.army)?.stance === 'fallback' ? 1.5 : 1));
+        if (s.state === 'idle') s.dig = Math.min(1, s.dig + DIG_PER_HOUR * (1 + s.tpl.stats.fx.dig) * (s.slot && this.armies.byId.get(s.army)?.stance === 'fallback' ? 1.5 : 1));
         else if (s.state !== 'battle') s.dig = 0;
       }
       if (!s.battle) {
@@ -322,8 +364,16 @@ export class Units {
         s.org = Math.min(1, s.org + 0.012 * (0.25 + 0.75 * sup));
         if (land) {
           const n = g.nations[s.owner];
-          if (s.str < 1 && sup > 0.3 && n.manpower > 1 && g.allied(control[pixelOf(s.lat, s.lon)], s.owner)) { const add = Math.min(0.0025 * sup, 1 - s.str); s.str += add; n.manpower -= add * s.divs * 14; }
-          else if (sup < 0.2 && s.str > 0.1) { const loss = 0.0006 * (1 - sup / 0.2); s.str -= loss; n.casualties += loss * (s.kit?.men ?? s.divs * TYPES[s.type].men) * 0.1; }
+          if (s.str < 1 && sup > 0.3 && n.manpower > 1 && g.allied(control[pixelOf(s.lat, s.lon)], s.owner)) {
+            // Replacements need both men and equipment from the stockpile.
+            const want = Math.min(0.0025 * sup, 1 - s.str);
+            // Maintenance companies stretch the equipment, medical companies the recruits.
+            const fx = s.tpl.stats.fx;
+            const add = want * draw(n, needOf(s.tpl, want * s.divs * (1 + fx.eqUse)));
+            s.str += add;
+            n.manpower -= (add * s.divs * s.tpl.stats.men * (1 + fx.menUse)) / 1000;
+          }
+          else if (sup < 0.2 && s.str > 0.1 && g.enemiesOf(s.owner).size) { const loss = 0.0006 * (1 - sup / 0.2); s.str -= loss; n.casualties += loss * (s.kit?.men ?? s.divs * TYPES[s.type].men) * 0.1; }
         }
       }
       // Only an advancing division takes ground, clearing a swath as it goes. Holding a line,
@@ -464,14 +514,15 @@ export class Units {
     grid.clear();
   }
 
-  _support(owner, at) {
+  // Air support bonus for `owner` at a battle; the enemy's air defence (`aa`) cancels part of it.
+  _support(owner, at, aa = 0) {
     let wings = 0;
     const g = this.game, lat = at.lat;
     for (const s of this._air ?? this.stacks) {
       if (s.type !== 'air' || Math.abs(s.lat - lat) * KM_PER_DEG_LO > 800) continue;
       if ((s.owner === owner || g.allied(s.owner, owner)) && haversine(s, at) < 800) wings++;
     }
-    return 1 + Math.min(0.45, wings * 0.09);
+    return 1 + Math.min(0.45, wings * 0.09) * (1 - aa);
   }
 
   _fight(b) {
@@ -479,15 +530,35 @@ export class Units {
     const att = [...b.att].filter((s) => this.byId.has(s.id));
     const def = [...b.def].filter((s) => this.byId.has(s.id));
     if (!att.length || !def.length) { this._endBattle(b); return; }
-    // Supply, entrenchment (defence) and planning (attack) scale each division's weight.
-    const pow = (list, role) => list.reduce((t, s) => t + s.divs * s.str * (0.3 + 0.7 * s.org) * TYPES[s.type][role] * (0.7 + s.exp)
-      * (0.4 + 0.6 * s.supply) * (role === 'atk' ? 1 + s.plan : 1 + 0.5 * s.dig), 0);
-    const pa = pow(att, 'atk') * this._support(att[0].owner, b);
+    // Each division's weight: size, strength, organisation, experience and supply.
+    const weight = (s) => s.divs * s.str * (0.3 + 0.7 * s.org) * (0.7 + s.exp) * (0.4 + 0.6 * s.supply);
+    let pa, pd, holdD = false, holdA = false;
     const urban = b.dom === 'land' ? cityAt(b) : null;
-    const pd = pow(def, 'def') * 1.25 * this._support(def[0].owner, b) * (urban ? URBAN_DEFENCE : 1);
+    if (b.dom === 'land' && att[0].tpl && def[0].tpl) {
+      // The combat triangle (templates.js): soft attack against soft targets, piercing against
+      // armour, and armour the attacker cannot pierce turning most blows aside. The defender's
+      // line holds better against attackers short of breakthrough.
+      // Guns fire shells and drone units fly munitions from the national stockpile this hour.
+      const A = sideProfile(att, weight, this._expend(att, weight)), D = sideProfile(def, weight, this._expend(def, weight));
+      const onD = strike(A, D), onA = strike(D, A);
+      holdD = onD.holds; holdA = onA.holds;
+      b.info = { onD, onA, ammoA: A.ammoFill, ammoD: D.ammoFill, fpvA: A.fpvFill, fpvD: D.fpvFill };
+      const plan = att.reduce((t, s) => t + s.plan * (1 + s.tpl.stats.fx.plan) * weight(s), 0) / Math.max(1e-9, A.w);
+      const dig = def.reduce((t, s) => t + s.dig * weight(s), 0) / Math.max(1e-9, D.w);
+      const brk = Math.min(1.6, Math.max(0.6, Math.sqrt(A.brk / Math.max(1, D.def))));
+      pa = A.w * onD.value * (1 + plan) * brk * this._support(att[0].owner, b, D.aa);
+      pd = D.w * onA.value * 1.25 * (1 + 0.5 * dig) * this._support(def[0].owner, b, A.aa) * (urban ? URBAN_DEFENCE : 1);
+    } else {
+      const pow = (list, role) => list.reduce((t, s) => t + weight(s) * TYPES[s.type][role] * (role === 'atk' ? 1 + s.plan : 1 + 0.5 * s.dig), 0);
+      pa = pow(att, 'atk') * this._support(att[0].owner, b);
+      pd = pow(def, 'def') * 1.25 * this._support(def[0].owner, b);
+    }
     const ratio = pa / Math.max(0.05, pd);
-    const hitD = 0.0016 * Math.min(4, ratio) * (0.6 + this.r() * 0.8);
-    const hitA = 0.0014 * Math.min(4, 1 / ratio) * (0.6 + this.r() * 0.8);
+    b.ratio = ratio; b.holdD = holdD; b.holdA = holdA;
+    // Hits are small and organisation drains slowly, so an even fight lasts about a week; armour
+    // the enemy cannot pierce halves the losses it takes.
+    const hitD = 0.00035 * Math.min(3, ratio) * (0.6 + this.r() * 0.8) * (holdD ? 0.5 : 1);
+    const hitA = 0.0003 * Math.min(3, 1 / ratio) * (0.6 + this.r() * 0.8) * (holdA ? 0.5 : 1);
     const apply = (list, hit) => {
       for (const s of list) {
         const dmg = hit / Math.sqrt(s.divs);
@@ -523,6 +594,19 @@ export class Units {
       for (const s of att) this._retreat(s, def[0]);
       this._endBattle(b);
     }
+  }
+
+  // Draws an hour's ammunition and strike drones for one side; returns the share each division
+  // got, weighted by how much artillery and drone strength it brings.
+  _expend(list, weight) {
+    const g = this.game;
+    let aw = 0, ag = 0, fw = 0, fg = 0;
+    for (const s of list) {
+      const t = s.tpl.stats, n = g.nations[s.owner], k = s.divs * s.str;
+      if (t.ammo) { const w = weight(s) * t.arty; aw += w; ag += w * drawClass(n, 'ammo', t.ammo * k); }
+      if (t.fpv) { const w = weight(s) * (t.drone + t.dpierce); fw += w; fg += w * drawClass(n, 'fpv', t.fpv * k); }
+    }
+    return { ammo: aw ? ag / aw : 1, fpv: fw ? fg / fw : 1 };
   }
 
   // Turns strength lost into burnt-out vehicles on the ground, ahead of the formation.

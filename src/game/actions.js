@@ -1,6 +1,7 @@
 import { FACTIONS } from '../data/nations.js';
 import { pairKey, DAY } from './game.js';
 import { POLITICAL_DECISIONS, politicalSystem } from './politicalSystems.js';
+import { transferAid } from './economy.js';
 
 // Domestic decisions available to the player's own government.
 export const DECISIONS = [
@@ -62,7 +63,7 @@ export function diplomacy(g, p, t) {
   });
   const aid = Math.min(20, P.gdp * 0.005);
   add('aid', 'Give aid', 40, `Transfer $${aid >= 1 ? aid.toFixed(1) + 'B' : Math.round(aid * 1000) + 'M'} in economic aid. +15 opinion and +3 stability.`, cd('aid') ? 'Recently done.' : atWar ? 'Not while at war.' : P.gdp > aid * 2 || 'Economy too small.', () => {
-    P.gdp -= aid; T.gdp += aid;
+    transferAid(P, T, aid);
     g.addOpinion(p, t, 15);
     g.applyFx(T, { stabNow: 3 });
     P.cooldowns[`aid:${t}`] = g.time + 90 * DAY;
@@ -73,8 +74,8 @@ export function diplomacy(g, p, t) {
     g.addOpinion(p, t, 20);
     g.log(`${P.name} and ${T.name} sign a mutual defence pact.`, { nation: p, kind: 'diplo', major: true });
   });
-  add('sanction', 'Impose sanctions', 50, 'Restrict trade and finance. Their growth falls; so does their opinion of you.', T.sanctionedBy.has(p) ? 'Already sanctioned.' : (op < 10 && !allied) || 'Only against nations you are on poor terms with.', () => {
-    T.sanctionedBy.add(p); g.addOpinion(p, t, -30); P.mods.growth -= Math.min(0.2, T.gdp / P.gdp * 0.3);
+  add('sanction', 'Impose sanctions', 50, 'Restrict their trade and finance: their imports, exports and investment shrink. You lose exports to them too.', T.sanctionedBy.has(p) ? 'Already sanctioned.' : (op < 10 && !allied) || 'Only against nations you are on poor terms with.', () => {
+    T.sanctionedBy.add(p); g.addOpinion(p, t, -30);
     g.log(`${P.name} imposes sanctions on ${T.name}.`, { nation: p, kind: 'diplo', major: P.gdp > 1000 });
   });
   if (T.sanctionedBy.has(p)) add('lift', 'Lift sanctions', 10, 'Restore normal trade.', true, () => { T.sanctionedBy.delete(p); g.addOpinion(p, t, 15); });

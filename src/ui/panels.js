@@ -290,6 +290,21 @@ export class UnitPanel {
       ${s.plan ? `<div class="stat"><span class="k">Planning bonus</span><span class="v">+${Math.round(s.plan * 100)}%</span></div>` : ''}`;
   }
 
+  // The division's combat profile, and how its current battle stands on the triangle.
+  _combat(s) {
+    const c = s.tpl.stats, b = s.battle;
+    const mine = b && b.def.has(s) ? b.holdD : b?.holdA;
+    const theirs = b && b.def.has(s) ? b.holdA : b?.holdD;
+    const info = b?.info, ours = b && (b.def.has(s) ? 'D' : 'A');
+    const hit = info && (ours === 'A' ? info.onD : info.onA);
+    const ammo = info && (ours === 'A' ? info.ammoA : info.ammoD);
+    const notes = b ? [mine ? 'our armour holds' : theirs ? 'cannot pierce their armour' : '', hit && c.arty ? `guns ${hit.spot >= 0.5 ? 'spotted' : 'firing blind'}` : '', ammo != null && ammo < 0.9 && c.ammo ? `ammunition ${Math.round(ammo * 100)}%` : '', hit && (c.drone || c.dpierce) && hit.droneEff < 0.6 ? 'drones jammed or shot down' : ''].filter(Boolean) : [];
+    return `<div class="stat"><span class="k">Soft attack · Piercing</span><span class="v">${(c.soft + c.arty + c.drone).toFixed(0)} · ${(c.pierce + c.dpierce).toFixed(0)}</span></div>
+      <div class="stat"><span class="k">Armour · Penetration <small>${Math.round(c.hard * 100)}% hard</small></span><span class="v">${c.armor.toFixed(0)} · ${c.pen.toFixed(0)}</span></div>
+      <div class="stat"><span class="k">Spotting · EW · Counter-drone</span><span class="v">${Math.round(c.recon * 100)} · ${Math.round(c.ew * 100)} · ${Math.round(c.cdrone * 100)}</span></div>
+      ${b ? `<div class="stat"><span class="k">Battle</span><span class="v" style="font-family:var(--body);font-weight:400">${b.ratio ? `${(b.def.has(s) ? 1 / b.ratio : b.ratio).toFixed(2)}× ` : ''}${esc(notes.join(', ') || 'even terms')}</span></div>` : ''}`;
+  }
+
   _armyButtons() {
     const { units, game } = this.ctx;
     const A = units.armies, p = game.player;
@@ -318,7 +333,7 @@ export class UnitPanel {
       <div class="ph">
         <button class="close" data-close aria-label="Close">✕</button>
         <div class="uname">${multi ? `${this.list.length} formations` : esc(s.name)}</div>
-        <div class="utype">${svg(s.type)}<span>${t.domain === 'land' ? `${echelon(s.divs)} · ` : ''}${esc(t.label)}, ${esc(n.name)}</span></div>
+        <div class="utype">${svg(s.type)}<span>${t.domain === 'land' ? `${echelon(s.divs)} · ` : ''}${s.tpl ? esc(s.tpl.name) : esc(t.label)}, ${esc(n.name)}</span></div>
         <span class="ustatus ${status[0]}">${status[1]}</span>
       </div>
       <div class="pb">
@@ -333,6 +348,7 @@ export class UnitPanel {
           <div class="stat"><span class="k">Organisation</span><span class="v">${Math.round(s.org * 100)}%</span><span class="m"><i style="width:${s.org * 100}%"></i></span></div>
           <div class="stat"><span class="k">Experience</span><span class="v">${Math.round(s.exp * 100)}%</span></div>
           ${t.domain === 'land' ? this._logistics(s, own) : ''}
+          ${s.tpl ? this._combat(s) : ''}
           ${equipmentRows(s.type, n.iso3, this.list)}
           ${t.domain === 'land' && MOVE[s.type] ? `<div class="stat"><span class="k">Road march</span><span class="v">${MOVE[s.type].march} <small>km/day</small></span></div>
           <div class="stat"><span class="k">Advance under fire</span><span class="v">${MOVE[s.type].contested} <small>km/day</small></span></div>

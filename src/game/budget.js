@@ -16,13 +16,15 @@ export const BUDGET_LINES = [
   { id: 'housing', name: 'Housing', step: 0.25, cap: 6, effect: 'Stability', weight: { stab: 0.45 } },
 ];
 
+import { adjustDebt } from './economy.js';
+
 const round = (n, digits = 3) => Number(n.toFixed(digits));
 const measured = (observation, fallback) => observation && Number.isFinite(observation.pctGdp)
   ? { value: round(observation.pctGdp), source: `Observed ${observation.year}` }
   : { value: fallback, source: 'Game estimate' };
 const totalFromWatchTower = (text) => {
   const match = /^~?(\d+(?:\.\d+)?)(?:\s*[-–]\s*(\d+(?:\.\d+)?))?% of GDP/.exec(text ?? '');
-  return match ? (Number(match[1]) + Number(match[2] ?? match[1])) / (match[2] ? 2 : 1) : null;
+  return match ? (Number(match[1]) + Number(match[2] ?? match[1])) / 2 : null;
 };
 
 export function createBudget(n, observed = {}) {
@@ -126,10 +128,10 @@ export function takeBudgetLoan(g, n, kind) {
   if (why) return why;
   const amount = n.gdp * 0.02;
   if (kind === 'issue') {
-    n.debt += 2;
+    adjustDebt(n, 2);
     n.budget.reserve += amount;
   } else {
-    n.debt -= 2;
+    adjustDebt(n, -2);
     n.budget.reserve -= amount;
   }
   n.pp -= 20;

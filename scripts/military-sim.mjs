@@ -32,7 +32,7 @@ const report = (label) => {
     const avg = (k) => (m.reduce((t, s) => t + s[k], 0) / Math.max(1, m.length) * 100).toFixed(0);
     const states = {};
     for (const s of m) states[s.state] = (states[s.state] ?? 0) + 1;
-    return `${iso(a.owner)} ${a.name}: ${m.length} div, front ${a.front?.segs.length ?? 0} seg, plan ${(a.plan * 100).toFixed(0)}%, ${a.executing ? 'ATTACKING' : 'holding'}, supply ${(sup * 100).toFixed(0)}%, str ${avg('str')}% org ${avg('org')}% dig ${avg('dig')}% ${JSON.stringify(states)}`;
+    return `${iso(a.owner)} ${a.name}: mp ${Math.round(game.nations[a.owner].manpower)}k pp ${Math.round(game.nations[a.owner].pp)} hubs+${units.armies.hubs.filter((h) => h.owner === a.owner && h.kind === "built").length}, ${m.length} div, front ${a.front?.segs.length ?? 0} seg, plan ${(a.plan * 100).toFixed(0)}%, ${a.executing ? 'ATTACKING' : 'holding'}, supply ${(sup * 100).toFixed(0)}%, str ${avg('str')}% org ${avg('org')}% dig ${avg('dig')}% ${JSON.stringify(states)}`;
   });
   console.log(`\n${label}: ${new Date(game.time).toISOString().slice(0, 10)}  occupied UKR px ${occ}  battles ${units.battles.length}  queue ${units.armies.queue.length}`);
   for (const l of armies) console.log('  ' + l);

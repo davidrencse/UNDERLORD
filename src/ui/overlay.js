@@ -1,7 +1,7 @@
 import * as THREE from 'three';
-import { ll2v, DEG, haversine, interpolate } from '../util/geo.js';
+import { ll2v, DEG, haversine, interpolate, destination } from '../util/geo.js';
 import { setBack } from '../game/fronts.js';
-import { hubCap } from '../game/supply.js';
+import { hubCap, fullKm } from '../game/supply.js';
 import { CITIES } from '../data/places.js';
 import { TYPES, echelon } from '../game/units.js';
 import { svg, counter } from './symbols.js';
@@ -46,6 +46,7 @@ export class Overlay {
     this.selected = new Set();
     this.selectedNation = null;
     this.activeArmy = null;
+    this.mode = 0;
     this.hubEls = new Map();
     // Battle plans and fronts, drawn as screen-space strokes under the counters.
     this.plansSvg = document.createElementNS(SVGNS, 'svg');
@@ -279,7 +280,18 @@ export class Overlay {
   _buildPlans() {
     const { units, game } = this.ctx;
     const A = units.armies, items = [];
-    const push = (cls, pts, arrow = false) => { if (pts.length > 1) items.push({ cls, pts: pts.map(toV), arrow }); };
+    const push = (cls, pts, arrow = false, closed = false) => { if (pts.length > 1) items.push({ cls, pts: pts.map(toV), arrow, closed }); };
+    // Supply map: the full-supply radius of every hub you or your allies can draw from.
+    if (this.mode === 6) {
+      const p = game.player;
+      for (const h of A.hubs) {
+        const own = h.ctrl === p;
+        if (!own && !(game.allied(h.ctrl, p) && !game.atWar(h.ctrl, p))) continue;
+        const ring = [];
+        for (let b = 0; b <= 360; b += 10) ring.push(destination(h, b, fullKm(h.level)));
+        push(`reach${own ? '' : ' ally'}${hubCap(h, game.time) ? '' : ' off'}`, ring, false, true);
+      }
+    }
     for (const seg of A.warFront) { push('wf-h', seg); push('wf', seg); }
     for (const a of A.of(game.player)) {
       const act = a.id === this.activeArmy ? ' act' : '';
@@ -297,18 +309,18 @@ export class Overlay {
   _plans(W, H) {
     const { units, cam } = this.ctx;
     const A = units.armies;
-    const key = `${A.version}|${this.activeArmy}`;
+    const key = `${A.version}|${this.activeArmy}|${this.mode}|${this.ctx.game.day}`;
     if (key !== this._planKey) { this._planKey = key; this._planItems = this._buildPlans(); }
     const items = this._planItems.slice();
-    // Supply routes of the selected divisions.
-    if (this.selected.size && this.selected.size <= 40) {
-      const hubs = this._hubById ??= new Map();
-      if (hubs.size !== A.hubs.length) { hubs.clear(); for (const h of A.hubs) hubs.set(h.id, h); }
-      for (const id of this.selected) {
-        const s = units.byId.get(id), h = s && s.hub && hubs.get(s.hub);
-        if (h && s.owner === this.ctx.game.player) items.push({ cls: s.supply < 0.25 ? 'sl cut' : 'sl', pts: [toV(s), toV(h)], arrow: false });
-      }
-    }
+    // Supply routes: of the selected divisions, or of all your divisions on the supply map.
+    const hubs = this._hubById ??= new Map();
+    if (hubs.size !== A.hubs.length) { hubs.clear(); for (const h of A.hubs) hubs.set(h.id, h); }
+    const route = (s) => {
+      const h = s && s.hub && hubs.get(s.hub);
+      if (h && s.owner === this.ctx.game.player) items.push({ cls: s.supply < 0.25 ? 'sl cut' : s.supply < 0.5 ? 'sl low' : 'sl', pts: [toV(s), toV(h)], arrow: false });
+    };
+    if (this.mode === 6) { let k = 0; for (const s of units.stacks) if (s.owner === this.ctx.game.player && s.kit && !s.estimated && k++ < 400) route(s); }
+    else if (this.selected.size && this.selected.size <= 40) for (const id of this.selected) route(units.byId.get(id));
     const tool = this.ctx.tool?.();
     if (tool?.pts) {
       const hover = this.ctx.toolHover?.();
@@ -328,6 +340,7 @@ export class Overlay {
         pen = true;
       }
       if (!d) continue;
+      if (it.closed && !d.includes('M', 1)) d += 'Z';
       let el = els[k];
       if (!el) { el = els[k] = { p: document.createElementNS(SVGNS, 'path'), d: '', cls: '', arrow: null }; this._planG.appendChild(el.p); }
       const cls = thin ? `${it.cls} thin` : it.cls;
@@ -343,8 +356,9 @@ export class Overlay {
   _hubs(W, H) {
     const { units, game, cam } = this.ctx;
     const A = units.armies, player = game.player, enemies = game.enemiesOf(player);
-    const show = cam.dist < 0.42;
-    const labels = cam.dist < 0.16;
+    const supplyMap = this.mode === 6;
+    const show = cam.dist < (supplyMap ? 1.4 : 0.42);
+    const labels = cam.dist < (supplyMap ? 0.4 : 0.16);
     for (const h of A.hubs) {
       let rec = this.hubEls.get(h.id);
       if (!rec) {
@@ -362,14 +376,14 @@ export class Overlay {
       const cap = hubCap(h, game.time);
       const building = h.readyAt > game.time, damaged = h.damagedUntil > game.time;
       const load = Math.round(h.load);
-      const key = `${rel}|${building}|${damaged}|${labels}|${load}|${Math.round(cap)}`;
+      const key = `${rel}|${building}|${damaged}|${labels}|${load}|${Math.round(cap)}|${h.level}|${h.upgradeAt}`;
       if (key !== rec.key) {
         rec.key = key;
-        rec.el.className = `hub ${REL_CLS[rel]}${building ? ' building' : ''}${damaged ? ' damaged' : ''}${labels ? ' labelled' : ''}${load > cap && cap ? ' over' : ''}`;
-        rec.el.lastChild.textContent = h.name;
+        rec.el.className = `hub lv${h.level} ${REL_CLS[rel]}${building ? ' building' : ''}${damaged ? ' damaged' : ''}${labels ? ' labelled' : ''}${load > cap && cap ? ' over' : ''}`;
+        rec.el.lastChild.innerHTML = `${esc(h.name)}<em>L${h.level}${h.upgradeAt ? '↑' : ''}${rel === 0 && cap ? ` · ${load}/${Math.round(cap)}` : ''}</em>`;
         rec.el.title = building
           ? `${h.name}: supply hub under construction, open ${new Date(h.readyAt).toISOString().slice(0, 10)}`
-          : `${h.name}: supply hub, ${Math.round(cap)} divisions of throughput${damaged ? ' (damaged, half capacity)' : ''}. ${load ? `${load} drawing.` : 'Unused.'}`;
+          : `${h.name}: level ${h.level} supply hub, ${Math.round(cap)} divisions of throughput, full supply within ${fullKm(h.level)} km${damaged ? ' (damaged, half capacity)' : ''}. ${load ? `${load} drawing.` : 'Unused.'}`;
       }
       if (pr.x !== rec.x || pr.y !== rec.y) { rec.x = pr.x; rec.y = pr.y; rec.el.style.transform = `translate(${pr.x}px, ${pr.y}px)`; }
       this._show(rec, true);

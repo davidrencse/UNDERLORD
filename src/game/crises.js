@@ -71,6 +71,30 @@ const DEFS = [
     ],
   },
   {
+    id: 'currency',
+    title: 'Currency crisis',
+    when: (g, n) => (n.econ?.devalued ? 1 : 0),
+    text: (n) => `${n.name}'s central bank has run out of reserves to defend the currency. It has lost a third of its value overnight; importers are hoarding dollars and dollar debts have ballooned.`,
+    start: (g, n) => { n.econ.devalued = false; },
+    options: [
+      { label: 'Emergency rate hike', desc: 'Pay savers to keep their money at home. Credit dries up.', fx: { econ: { rate: 6 }, stabNow: -2, loyalty: { business: -4 } } },
+      { label: 'Impose capital controls', desc: 'Lock the exits. Investors will not soon forget.', fx: { econ: { law: ['currency', 'controls'] }, loyalty: { business: -8, security: 4 } } },
+      { label: 'Seek an IMF loan', desc: 'Dollars now, conditions later.', fx: { timed: ['imf_bailout', 540], econ: { reserves: 4 }, debt: 3 } },
+    ],
+  },
+  {
+    id: 'energy',
+    title: 'Energy shortage',
+    when: (g, n) => (n.econ && n.econ.comm.energy.r < 0.93 && (n.cooldowns['crisis:energy'] ?? 0) < g.time ? 0.03 : 0),
+    text: (n) => `Fuel and power cannot be bought in the quantities ${n.name} needs. Factories are cutting shifts, and rolling blackouts have reached ${n.capitalName ?? 'the capital'}.`,
+    start: (g, n) => { n.cooldowns['crisis:energy'] = g.time + 240 * DAY; },
+    options: [
+      { label: 'Ration energy', desc: 'Cut demand by decree for six months.', fx: { econ: { ration: ['energy', 180] }, stabNow: -3 } },
+      { label: 'Release strategic reserves', desc: 'Draw down the stockpile to keep the lights on.', fx: { econ: { stock: 2 }, pp: -20 } },
+      { label: 'Pay any price', desc: 'Outbid everyone for cargoes on the spot market.', fx: { econ: { access: [0.25, 180] }, debt: 1.5 } },
+    ],
+  },
+  {
     id: 'disaster',
     title: 'Natural disaster',
     when: (g, n) => (n.inert ? 0 : 0.00035 * (Math.abs(n.capital.lat) < 35 ? 1.6 : 1)),

@@ -1,12 +1,12 @@
-import { TRAIN, trainingLines } from '../game/armies.js';
-import { SUPPLY } from '../game/supply.js';
+import { trainingLines } from '../game/armies.js';
+import { SUPPLY, LEVEL_CAP } from '../game/supply.js';
 import { esc, int } from './format.js';
 
 const TOOL_HINT = {
   front: 'Front line: click the enemy country. The army spreads along your border with it and follows it as it moves.',
   fallback: 'Fallback line: click points on your own ground, then Enter or right-click to finish. Divisions dig in faster there.',
   offensive: 'Offensive line: click points across enemy ground, then Enter or right-click to finish. Execute to push to it.',
-  hub: `Supply hub: click your own ground. ${SUPPLY.buildPP} political power, open in ${SUPPLY.buildDays} days, ${SUPPLY.buildCap} divisions of throughput.`,
+  hub: `Supply hub: click your own ground. ${SUPPLY.buildPP} political power; opens at level ${SUPPLY.buildLevel} (${LEVEL_CAP[SUPPLY.buildLevel]} divisions) in ${SUPPLY.buildDays} days.`,
 };
 
 const stanceText = (g, a) => {
@@ -72,6 +72,7 @@ export class ArmyBar {
     else if (d.clear && a) A.clear(a, d.clear);
     else if (d.disband !== undefined && a) { A.disband(a); this.ctx.setActiveArmy(null); }
     else if (d.trainpanel !== undefined) this.trainOpen = !this.trainOpen;
+    else if (d.design !== undefined) { this.ctx.openMilitary('designer'); return; }
     else if (d.train) why = A.train(p, d.train, a?.id ?? 0);
     else if (d.cancel) A.cancel(+d.cancel);
     if (why) toast(why);
@@ -121,11 +122,12 @@ export class ArmyBar {
     const day = 86400000;
     const train = this.trainOpen ? `<div class="ab-train">
         <div class="h"><b>Training</b><span class="num">${q.length} / ${lines} lines · ${int(n.manpower)}k manpower</span></div>
-        ${Object.entries(TRAIN).map(([k, t]) => `<div class="row"><span>${t.label} division</span><span class="num">${t.manpower}k · ${t.days} d</span><button data-train="${k}" ${q.length >= lines || n.manpower < t.manpower ? 'disabled' : ''}>Train</button></div>`).join('')}
+        ${n.templates.map((t) => `<div class="row"><span>${esc(t.name)}</span><span class="num">${Math.ceil(t.stats.men / 1000)}k · ${t.stats.days} d</span><button data-train="${t.id}" ${q.length >= lines || n.manpower < Math.ceil(t.stats.men / 1000) ? 'disabled' : ''}>Train</button></div>`).join('')}
+        <button class="lnk ab-design" data-design>Design a division…</button>
         ${q.length ? `<div class="queue">${q.map((x) => {
           const f = Math.min(1, (game.time - x.start) / (x.ready - x.start));
           const to = A.byId.get(x.army);
-          return `<div class="qi"><span>${TRAIN[x.type].label}${to ? ` → ${esc(to.name)}` : ''}</span><span class="num">${Math.ceil((x.ready - game.time) / day)} d</span><button data-cancel="${x.id}" aria-label="Cancel">✕</button><i style="width:${Math.round(f * 100)}%"></i></div>`;
+          return `<div class="qi"><span>${esc(x.tpl.name)}${to ? ` → ${esc(to.name)}` : ''}</span><span class="num">${Math.ceil((x.ready - game.time) / day)} d</span><button data-cancel="${x.id}" aria-label="Cancel">✕</button><i style="width:${Math.round(f * 100)}%"></i></div>`;
         }).join('')}</div>` : ''}
         <p>New divisions deploy at the hub nearest ${a ? esc(a.name) : 'the capital'}${a ? ' and join it as reinforcements' : ''}. Lines come from defence spending.</p>
       </div>` : '';

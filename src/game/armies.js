@@ -5,11 +5,14 @@
 // builds an attack bonus; executing spends it. Supply hubs feed the divisions, and new
 // divisions trained at home deploy to an army as reinforcements.
 
-import { haversine, destination, rng, hashString } from '../util/geo.js';
+import { haversine, destination, rng, hashString, bearing as bearingTo } from '../util/geo.js';
 import { pixelOf, MAP_W, MAP_H } from '../world/geo.js';
 import { CITIES, NAVAL_BASES } from '../data/places.js';
 import { traceFront, spread, paramAlong, setBack, lineKm } from './fronts.js';
-import { seedHubs, computeSupply, hubCap, SUPPLY } from './supply.js';
+import { seedHubs, computeSupply, hubCap, SUPPLY, upgradePP } from './supply.js';
+import { EQUIPMENT_IDS, COST } from './templates.js';
+import { needOf, draw, produceDay, autoAssign, optionsFor } from './production.js';
+import { restat } from './templates.js';
 
 const DAY = 86400000;
 const LAND = new Set(['armor', 'mech', 'inf', 'airborne', 'marine']);
@@ -23,12 +26,6 @@ export const PLAN = {
   setBackKm: 6, // divisions hold this far behind the contact line
   pushKm: 15, // how far past the line each division drives per bound when a front executes
   updateHours: 6,
-};
-
-export const TRAIN = {
-  inf: { days: 45, manpower: 12, label: 'Infantry' },
-  mech: { days: 60, manpower: 14, label: 'Mechanised' },
-  armor: { days: 75, manpower: 13, label: 'Armoured' },
 };
 
 // Divisions a nation can have in training at once, from its defence spending ($10bn a line).
@@ -272,10 +269,31 @@ export class Armies {
     const g = this.game, n = g.nations[owner];
     n.pp -= SUPPLY.buildPP;
     const city = CITIES.filter((c) => haversine(c, p) < 40).sort((x, y) => haversine(x, p) - haversine(y, p))[0];
+    const near = this.hubs.filter((h) => h.owner === owner && h.kind === 'built').length + 1;
     this.hubs.push({
-      id: this.hubs.length + 1, owner, ctrl: owner, lat: p.lat, lon: p.lon, name: city ? `${city.name} railhead` : 'Forward railhead',
-      cap: SUPPLY.buildCap, kind: 'built', damagedUntil: 0, readyAt: g.time + SUPPLY.buildDays * DAY, load: 0,
+      id: this.hubs.length + 1, owner, ctrl: owner, lat: p.lat, lon: p.lon, name: city ? `${city.name} railhead` : `Railhead ${near}`,
+      level: SUPPLY.buildLevel, kind: 'built', damagedUntil: 0, readyAt: g.time + SUPPLY.buildDays * DAY, upgradeAt: 0, load: 0,
     });
+    this.version++;
+    return null;
+  }
+
+  // Why hub `h` cannot be upgraded by `owner` right now, or null.
+  canUpgradeHub(owner, h) {
+    if (!h || h.ctrl !== owner) return 'You do not hold this hub.';
+    if (h.readyAt > this.game.time) return 'Still under construction.';
+    if (h.upgradeAt) return 'Already being upgraded.';
+    if (h.level >= SUPPLY.maxLevel) return 'Already at the highest level.';
+    if (this.game.nations[owner].pp < upgradePP(h.level)) return `Needs ${upgradePP(h.level)} political power.`;
+    return null;
+  }
+
+  upgradeHub(owner, id) {
+    const h = this.hubs.find((x) => x.id === id);
+    const why = this.canUpgradeHub(owner, h);
+    if (why) return why;
+    this.game.nations[owner].pp -= upgradePP(h.level);
+    h.upgradeAt = this.game.time + SUPPLY.upgradeDays * DAY;
     this.version++;
     return null;
   }
@@ -293,22 +311,25 @@ export class Armies {
         else if (c === g.player) g.log(`${h.name} supply hub captured. It runs at half capacity while it is repaired.`, { nation: c, kind: 'war' });
       }
       if (h.readyAt && h.readyAt <= g.time && h.readyAt > g.time - DAY && h.ctrl === g.player) {
-        g.log(`${h.name} is open.`, { nation: h.ctrl, kind: 'info' });
+        g.log(`${h.name} supply hub is open.`, { nation: h.ctrl, kind: 'info' });
         this.version++;
+      }
+      if (h.upgradeAt && h.upgradeAt <= g.time) {
+        h.upgradeAt = 0;
+        // An upgrade is lost if the hub changed hands while it was under way.
+        if (h.ctrl === h.owner || h.kind === 'built') h.level = Math.min(SUPPLY.maxLevel, h.level + 1);
+        this.version++;
+        if (h.ctrl === g.player) g.log(`${h.name} supply hub upgraded to level ${h.level}.`, { nation: h.ctrl, kind: 'info' });
       }
     }
   }
 
   _supplyDaily() {
     const g = this.game, units = this.units;
-    const atWar = [];
-    for (const s of units.stacks) {
-      if (!LAND.has(s.type)) continue;
-      if (g.enemiesOf(s.owner).size) atWar.push(s);
-      else s.supply = 1;
-    }
+    // Every land formation is supplied, at war or not; only a nation at war can have a route cut.
+    const land = units.stacks.filter((s) => LAND.has(s.type));
     const usable = new Map(), enemies = new Map();
-    computeSupply(atWar, this.hubs, {
+    computeSupply(land, this.hubs, {
       time: g.time, control: this.world.control, pixelOf,
       usable: (o) => {
         let l = usable.get(o);
@@ -316,6 +337,7 @@ export class Armies {
         return l;
       },
       isEnemyOf: (o) => {
+        if (!g.enemiesOf(o).size) return null;
         let t = enemies.get(o);
         if (!t) enemies.set(o, (t = this._lut((c) => g.atWar(o, c))));
         return (c) => t[c] === 1;
@@ -326,13 +348,16 @@ export class Armies {
   // ---------------------------------------------------------------- training and reinforcement
   queued(owner) { return this.queue.filter((q) => q.owner === owner); }
 
-  train(owner, type, armyId = 0) {
-    const g = this.game, n = g.nations[owner], t = TRAIN[type];
-    if (!t) return 'Unknown division type.';
+  // Queues a division of template `tplId`. Recruits are taken now; equipment when it deploys.
+  train(owner, tplId, armyId = 0) {
+    const g = this.game, n = g.nations[owner];
+    const tpl = n.templates.find((t) => t.id === tplId);
+    if (!tpl) return 'Unknown division template.';
     if (this.queued(owner).length >= trainingLines(n)) return `All ${trainingLines(n)} training lines are busy. Raise military spending for more.`;
-    if (n.manpower < t.manpower) return `Needs ${t.manpower}k manpower.`;
-    n.manpower -= t.manpower;
-    this.queue.push({ id: this.nextQ++, owner, type, start: g.time, ready: g.time + t.days * DAY, army: armyId });
+    const men = Math.ceil(tpl.stats.men / 1000);
+    if (n.manpower < men) return `Needs ${men}k manpower.`;
+    n.manpower -= men;
+    this.queue.push({ id: this.nextQ++, owner, tpl, men, start: g.time, ready: g.time + tpl.stats.days * DAY, army: armyId });
     this.version++;
     return null;
   }
@@ -340,7 +365,7 @@ export class Armies {
   cancel(id) {
     const q = this.queue.find((x) => x.id === id);
     if (!q) return;
-    this.game.nations[q.owner].manpower += TRAIN[q.type].manpower;
+    this.game.nations[q.owner].manpower += q.men;
     this.queue = this.queue.filter((x) => x !== q);
     this.version++;
   }
@@ -358,11 +383,62 @@ export class Armies {
       const hubs = this.hubs.filter((h) => h.ctrl === q.owner && hubCap(h, g.time) > 0);
       const at = hubs.sort((x, y) => haversine(x, toward) - haversine(y, toward))[0] ?? n.capital;
       const p = destination(at, this.r() * 360, 4 + this.r() * 10);
-      const s = this.units.add({ owner: q.owner, type: q.type, divs: 1, lat: p.lat, lon: p.lon, str: 1, org: 0.6, exp: 0.15, fresh: true });
+      // It deploys with whatever share of its equipment the stockpile can give it.
+      const fill = draw(n, needOf(q.tpl));
+      const s = this.units.add({ owner: q.owner, type: q.tpl.stats.type, tpl: q.tpl, divs: 1, lat: p.lat, lon: p.lon, str: Math.max(0.2, fill), org: 0.6, exp: 0.15, fresh: true });
       if (a && a.owner === q.owner) this.assign(a, [s]);
-      if (q.owner === g.player) g.log(`${s.name} has finished training${a ? ` and is moving up to ${a.name}` : ` at ${at.name ?? 'the capital'}`}.`, { nation: q.owner, kind: 'war' });
+      if (q.owner === g.player) g.log(`${s.name} has finished training${a ? ` and is moving up to ${a.name}` : ` at ${at.name ?? 'the capital'}`}${fill < 0.95 ? `, at ${Math.round(Math.max(0.2, fill) * 100)}% strength for want of equipment` : ''}.`, { nation: q.owner, kind: 'war' });
     }
     this.game.emit('units');
+  }
+
+  // ---------------------------------------------------------------- production
+  // Equipment a nation is short of, in factory-days: what its divisions need to refill, what its
+  // queued divisions will need, less the stockpile.
+  demand(owner) {
+    const n = this.game.nations[owner];
+    const want = {};
+    for (const s of this.units.stacks) {
+      if (s.owner !== owner || !s.tpl || s.str >= 0.999) continue;
+      for (const [e, v] of Object.entries(needOf(s.tpl, (1 - s.str) * s.divs))) want[e] = (want[e] ?? 0) + v;
+    }
+    for (const q of this.queue) if (q.owner === owner) for (const [e, v] of Object.entries(needOf(q.tpl))) want[e] = (want[e] ?? 0) + v;
+    // Consumables: three months of the current rate of fire on top, since guns and drone units
+    // without them fall silent.
+    const P = n.production;
+    for (const e of ['ammo', 'fpv']) want[e] = (want[e] ?? 0) + (P.need?.[e] ?? 0) * 90;
+    const out = {};
+    for (const e of EQUIPMENT_IDS) out[e] = Math.max(0, (want[e] ?? 0) - (P.stock[e] ?? 0)) * (COST[e] ?? 1);
+    return out;
+  }
+
+  _productionDaily() {
+    const g = this.game;
+    const monthly = g.day % 30 === 0;
+    for (const n of g.live()) {
+      if (!n.production) continue;
+      produceDay(n);
+      if (monthly) {
+        // Alliances change what may be built under licence; stock quality changes division stats.
+        const isPartner = (iso) => { const m = this.world.byIso.get(iso); return !!m && m !== n && g.allied(n.index, m.index); };
+        n.production.options = optionsFor(n, isPartner, g.time);
+        for (const t of n.templates) restat(t, n.production.quality);
+      }
+      // Nations on automatic production (the AI, and the player until they change a line) rebalance
+      // their lines toward shortages once a month, with a floor for each kind they field.
+      if (n.production.auto && (g.day + n.index) % 30 === 0) {
+        const want = this.demand(n.index);
+        const fielded = {};
+        for (const s of this.units.stacks) if (s.owner === n.index && s.tpl) for (const [e, v] of Object.entries(needOf(s.tpl, s.divs))) fielded[e] = (fielded[e] ?? 0) + v * (COST[e] ?? 1) * 0.02;
+        // No one shortage may claim more than two months of every factory, so a lost tank park
+        // cannot starve the guns of shells; consumables count double, as the line runs on them.
+        const cap = n.production.factories * 60;
+        for (const e of EQUIPMENT_IDS) want[e] = Math.min(cap, ((want[e] ?? 0) + (fielded[e] ?? 0)) * (e === 'ammo' || e === 'fpv' ? 2 : 1));
+        const before = new Map(n.production.lines.map((l) => [l.eq, l.eff]));
+        autoAssign(n, want);
+        for (const l of n.production.lines) if (before.has(l.eq)) l.eff = before.get(l.eq);
+      }
+    }
   }
 
   // ---------------------------------------------------------------- simulation hooks
@@ -376,6 +452,7 @@ export class Armies {
     const g = this.game;
     this._hubsDaily();
     this._supplyDaily();
+    this._productionDaily();
     this._trainingDaily();
     for (const a of this.list) {
       a.plan = a.executing ? Math.max(0, a.plan - 0.1) : (a.front || a.offensive) ? Math.min(1, a.plan + 1 / PLAN.days) : Math.max(0, a.plan - 0.05);
@@ -433,13 +510,26 @@ export class Armies {
         this.assign(army, free);
         if (snap) this.refresh(army, { snap: true });
       }
-      if (!snap) this._aiOffensive(n, army);
+      if (!snap) { this._aiOffensive(n, army); this._aiLogistics(n, army); }
       // Replacements for the line come first; new divisions only from a healthy reserve.
       if (!snap && this.queued(n.index).length < trainingLines(n) && n.manpower > 80 && this.r() < 0.3) {
         const roll = this.r();
-        this.train(n.index, roll < 0.6 ? 'inf' : roll < 0.85 ? 'mech' : 'armor', army.id);
+        this.train(n.index, n.templates[roll < 0.6 ? 0 : roll < 0.85 ? 1 : 2]?.id, army.id);
       }
     }
+  }
+
+  // Builds a railhead behind the worst-supplied stretch of the line, and upgrades overloaded hubs.
+  _aiLogistics(n, a) {
+    if (this.r() > 0.25) return;
+    const g = this.game;
+    const over = this.hubs.filter((h) => h.ctrl === n.index && h.load > hubCap(h, g.time) && !this.canUpgradeHub(n.index, h)).sort((x, y) => y.load - x.load)[0];
+    if (over) { this.upgradeHub(n.index, over.id); return; }
+    const short = this.members(a).filter((s) => s.supply < 0.6 && s.supply > SUPPLY.cutFactor * 1.5 && !s.battle);
+    if (short.length < 3) return;
+    const s = short[Math.floor(this.r() * short.length)];
+    const back = destination(s, bearingTo(s, n.capital), 50);
+    if (!this.canBuildHub(n.index, back)) this.buildHub(n.index, back);
   }
 
   _aiOffensive(n, a) {
@@ -447,7 +537,8 @@ export class Armies {
     if (!a.front?.segs.length) return;
     const members = this.members(a);
     if (!members.length) return;
-    const pow = (s, role) => s.divs * s.str * (0.3 + 0.7 * s.org) * (role === 'atk' ? (s.type === 'armor' ? 1.55 : s.type === 'mech' ? 1.25 : 0.95) : 1.2) * (0.4 + 0.6 * (s.supply ?? 1));
+    const atk = (t) => t.soft + t.arty + t.drone + t.pierce + t.dpierce;
+    const pow = (s, role) => s.divs * s.str * (0.3 + 0.7 * s.org) * (s.tpl ? (role === 'atk' ? atk(s.tpl.stats) : s.tpl.stats.def) / 100 : 1) * (0.4 + 0.6 * (s.supply ?? 1));
     const mine = members.reduce((t, s) => t + pow(s, 'atk'), 0);
     // Enemy divisions within 60 km of the front.
     const pts = a.front.segs.flat().filter((_, i) => i % 3 === 0);
