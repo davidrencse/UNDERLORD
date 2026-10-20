@@ -20,6 +20,8 @@ import { ArmyBar } from './ui/armyBar.js';
 import { SupplyScreen } from './ui/supplyScreen.js';
 import { DesignerScreen } from './ui/designerScreen.js';
 import { ProductionScreen } from './ui/productionScreen.js';
+import { ResearchScreen } from './ui/researchScreen.js';
+import { TECH } from './game/research.js';
 import { ll2v, interpolate, haversine, destination } from './util/geo.js';
 
 const loading = document.createElement('div');
@@ -143,7 +145,8 @@ const armyBar = new ArmyBar(ui, ctx);
 const supply = new SupplyScreen(ui, ctx);
 const designer = new DesignerScreen(ui, ctx);
 const production = new ProductionScreen(ui, ctx);
-const military = { supply, designer, production };
+const research = new ResearchScreen(ui, ctx);
+const military = { supply, designer, production, research };
 let milTab = 'supply';
 
 // The supply, army designer and production screens share one tab strip. A hotkey toggles its
@@ -365,7 +368,7 @@ let dayUIQueued = false;
 function flushDayUI() {
   dayUIQueued = false;
   if (game.player == null) return;
-  hud.renderTop(); countryPanel.render(); focus.render(); economy.render(); supply.render(); production.render();
+  hud.renderTop(); countryPanel.render(); focus.render(); economy.render(); supply.render(); production.render(); research.render();
 }
 game.on('day', () => {
   if (mode) rebuildLUT();
@@ -375,6 +378,14 @@ game.on('wars', () => rebuildLUT());
 game.on('event', () => events.next());
 game.on('raise', () => setTimeout(() => hud.renderTop(), 0));
 game.on('politics', () => countryPanel.schedule());
+// A finished technology: say what it opens up, and refresh the production picker.
+game.on('research', (n, done) => {
+  for (const id of done) {
+    const t = TECH[id];
+    hud.toast(`Research complete: ${t.name}${t.unlocks.length ? '. New models can be put on the production lines.' : '.'}`);
+  }
+  production._html = '';
+});
 let ctrlDirty = false, ownerDirty = false;
 game.on('control', (annexed) => { ctrlDirty = true; if (annexed) ownerDirty = true; });
 

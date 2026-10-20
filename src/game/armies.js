@@ -13,6 +13,7 @@ import { seedHubs, computeSupply, hubCap, SUPPLY, upgradePP } from './supply.js'
 import { EQUIPMENT_IDS, COST } from './templates.js';
 import { needOf, draw, produceDay, autoAssign, optionsFor } from './production.js';
 import { restat } from './templates.js';
+import { researchDay, autoResearch, seedResearch, hasTech, ratings, TECH } from './research.js';
 
 const DAY = 86400000;
 const LAND = new Set(['armor', 'mech', 'inf', 'airborne', 'marine']);
@@ -412,18 +413,46 @@ export class Armies {
     return out;
   }
 
+  // What a nation may build, and its templates' ratings, after alliances, stock or research change.
+  refreshOptions(n) {
+    const g = this.game, byIso = this.world.byIso;
+    const isPartner = (iso) => { const m = byIso.get(iso); return !!m && m !== n && g.allied(n.index, m.index); };
+    n.production.options = optionsFor(n, isPartner, g.time, (iso, tech) => hasTech(byIso.get(iso), tech));
+    for (const t of n.templates) restat(t, ratings(n));
+  }
+
+  // Research slots advance; the AI keeps every slot busy, favouring the classes its army fields.
+  // A finished technology opens its models to the production lines at once.
+  _researchDaily() {
+    const g = this.game;
+    for (const n of g.live()) {
+      if (!n.production) continue;
+      if (!n.research) seedResearch(n);
+      const done = researchDay(n, g.time);
+      // Picks happen when a project finishes, and every ten days for slots left idle (a new slot
+      // from a bigger budget, or a nation that has run out of technologies).
+      if (n.index !== g.player && n.research.slots.includes(null) && (done.length || (g.day + n.index) % 10 === 0 || !n.research.picked)) {
+        n.research.picked = true;
+        const uses = {};
+        for (const s of this.units.stacks) if (s.owner === n.index && s.tpl) for (const e of Object.keys(s.tpl.stats.eq)) uses[e] = true;
+        autoResearch(n, g.time, uses);
+      }
+      if (!done.length) continue;
+      this.refreshOptions(n);
+      // Partners may now build its models under licence.
+      if (done.some((id) => TECH[id].unlocks.length)) for (const m of g.live()) if (m !== n && m.production && g.allied(n.index, m.index)) this.refreshOptions(m);
+      if (n.index === g.player) g.emit('research', n, done);
+    }
+  }
+
   _productionDaily() {
     const g = this.game;
     const monthly = g.day % 30 === 0;
     for (const n of g.live()) {
       if (!n.production) continue;
       produceDay(n);
-      if (monthly) {
-        // Alliances change what may be built under licence; stock quality changes division stats.
-        const isPartner = (iso) => { const m = this.world.byIso.get(iso); return !!m && m !== n && g.allied(n.index, m.index); };
-        n.production.options = optionsFor(n, isPartner, g.time);
-        for (const t of n.templates) restat(t, n.production.quality);
-      }
+      // Alliances change what may be built under licence; stock quality changes division stats.
+      if (monthly) this.refreshOptions(n);
       // Nations on automatic production (the AI, and the player until they change a line) rebalance
       // their lines toward shortages once a month, with a floor for each kind they field.
       if (n.production.auto && (g.day + n.index) % 30 === 0) {
@@ -452,6 +481,7 @@ export class Armies {
     const g = this.game;
     this._hubsDaily();
     this._supplyDaily();
+    this._researchDaily();
     this._productionDaily();
     this._trainingDaily();
     for (const a of this.list) {

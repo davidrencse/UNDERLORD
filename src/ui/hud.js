@@ -75,6 +75,7 @@ export class Hud {
       else if (e.key === 'u' || e.key === 'U') ctx.openMilitary('supply', true);
       else if (e.key === 'b' || e.key === 'B') ctx.openMilitary('designer', true);
       else if (e.key === 'p' || e.key === 'P') ctx.openMilitary('production', true);
+      else if (e.key === 'i' || e.key === 'I') ctx.openMilitary('research', true);
       else if (e.key === 'o' || e.key === 'O') ctx.openDossier(ctx.selectedNation() ?? game.player);
       else if (e.key === 'Escape') ctx.escape();
     });

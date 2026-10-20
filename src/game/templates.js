@@ -85,8 +85,11 @@ export function countsOf(grid) {
 }
 
 // Combat and cost figures for a grid and support column. `quality` scales each battalion by the
-// standard of the equipment class it depends on (production.js keeps it per nation).
+// standard of the equipment class it depends on (production.js keeps it per nation, and research.js
+// `ratings` raises it by researched class improvements); its `mods` are research's explicit
+// modifiers (fibre-optic drones, spectrum-agile radios, precision rockets and so on).
 export function templateStats(grid, support = [], quality = null) {
+  const M = quality?.mods;
   const sup = support.filter((id) => SUPPORT[id]);
   let n = 0, width = 0, men = 0, soft = 0, arty = 0, drone = 0, pierce = 0, dpierce = 0, def = 0, brk = 0, orgW = 0, hardW = 0, days = 20;
   let penMax = 0, penSum = 0, penN = 0, dpen = 0, armMax = 0, armSum = 0, recon = 0, ew = 0, cdrone = 0, aa = 0, ammo = 0, fpv = 0;
@@ -121,7 +124,14 @@ export function templateStats(grid, support = [], quality = null) {
   }
   const cap = (v) => Math.min(0.9, v);
   const cost = Object.entries(eq).reduce((t, [e, v]) => t + v * (COST[e] ?? 1), 0);
-  if (!n) return { n: 0, width: 0, men, soft: 0, arty: 0, drone: 0, pierce: 0, dpierce: 0, pen: 0, dpen: 0, armor: 0, hard: 0, def: 0, brk: 0, org: 0, days, recon: 0, ew: 0, cdrone: 0, aa: 0, ammo: 0, fpv: 0, eq, cost, fx, sup, type: 'inf' };
+  if (!n) return { n: 0, width: 0, men, soft: 0, arty: 0, drone: 0, pierce: 0, dpierce: 0, pen: 0, dpen: 0, armor: 0, hard: 0, def: 0, brk: 0, org: 0, days, recon: 0, ew: 0, cdrone: 0, aa: 0, ammo: 0, fpv: 0, ewResist: 0, jamResist: 0, eq, cost, fx, sup, type: 'inf' };
+  // Research adds to coverage a division already has: radars help guns that are there to cue.
+  if (M) {
+    if (arty > 0) recon += M.recon;
+    if (cdrone > 0) cdrone += M.cdrone;
+    if (aa > 0) aa += M.aa;
+    ammo *= Math.max(0, 1 + M.ammoUse);
+  }
   return {
     n, width, men, days, eq, cost, fx, sup,
     soft, arty, drone, pierce, dpierce, dpen,
@@ -132,6 +142,8 @@ export function templateStats(grid, support = [], quality = null) {
     org: orgW / width + fx.org,
     recon: cap(recon), ew: cap(ew), cdrone: cap(cdrone), aa: cap(aa),
     ammo, fpv,
+    ewResist: drone || dpierce ? M?.ewResist ?? 0 : 0,
+    jamResist: arty ? M?.jamResist ?? 0 : 0,
     type: typeOf(countsOf(grid), width),
   };
 }
@@ -176,13 +188,13 @@ export function templateProblem(grid, support = []) {
 // Weighted average combat profile of one side of a battle. `weight(s)` is each division's share.
 // `fill` gives the share of ammunition and strike drones each side actually had this hour.
 export function sideProfile(list, weight, fill = { ammo: 1, fpv: 1 }) {
-  const keys = ['soft', 'arty', 'drone', 'pierce', 'dpierce', 'pen', 'dpen', 'armor', 'hard', 'def', 'brk', 'recon', 'ew', 'cdrone', 'aa'];
+  const keys = ['soft', 'arty', 'drone', 'pierce', 'dpierce', 'pen', 'dpen', 'armor', 'hard', 'def', 'brk', 'recon', 'ew', 'cdrone', 'aa', 'ewResist', 'jamResist'];
   const out = Object.fromEntries(keys.map((k) => [k, 0]));
   let w = 0;
   for (const s of list) {
     const t = s.tpl.stats, k = weight(s);
     w += k;
-    for (const key of keys) out[key] += t[key] * k;
+    for (const key of keys) out[key] += (t[key] ?? 0) * k;
   }
   const d = Math.max(1e-9, w);
   for (const key of keys) out[key] /= d;
@@ -191,10 +203,11 @@ export function sideProfile(list, weight, fill = { ammo: 1, fpv: 1 }) {
 
 // How hard side `a` hits side `b`, per unit of weight. Armour the attacker cannot penetrate turns
 // most blows aside; piercing that gets through hits an armoured target all the harder. Drones
-// attack from above with their own penetration.
+// attack from above with their own penetration. Researched resistance (fibre-optic drones,
+// spectrum-agile radios) takes away part of the enemy's EW.
 export function strike(a, b) {
-  const spot = Math.max(0, Math.min(1, a.recon * (1 - 0.7 * b.ew)));
-  const droneEff = (1 - Math.min(0.9, Math.max(b.cdrone, 0.6 * b.ew, 0.5 * b.aa))) * (a.fpvFill ?? 1);
+  const spot = Math.max(0, Math.min(1, a.recon * (1 - 0.7 * b.ew * (1 - (a.jamResist ?? 0)))));
+  const droneEff = (1 - Math.min(0.9, Math.max(b.cdrone, 0.6 * b.ew * (1 - (a.ewResist ?? 0)), 0.5 * b.aa))) * (a.fpvFill ?? 1);
   const artyEff = (0.5 + 0.5 * spot) * (0.25 + 0.75 * (a.ammoFill ?? 1));
   const soft = a.soft + a.arty * artyEff + a.drone * droneEff;
   const holds = b.armor > a.pen;

@@ -4,8 +4,9 @@ import { readFileSync } from 'node:fs';
 import { traceFront, spread, paramAlong, setBack, lineKm, contactPixels, windowAround } from '../src/game/fronts.js';
 import { computeSupply, reach, hubCap, routeCut, SUPPLY, LEVEL_CAP, fullKm, cityLevel, seedHubs } from '../src/game/supply.js';
 import { templateStats, sideProfile, strike, makeTemplate, templateProblem, gridOf, DEFAULT_TEMPLATES, MAX_WIDTH, COLS, ROWS } from '../src/game/templates.js';
-import { seedProduction, draw, drawClass, produceDay, addLine, setFactories, moveLine, switchLine, newLine, optionsFor, assigned, needOf } from '../src/game/production.js';
-import { MODELS, CLASSES } from '../src/data/equipment.js';
+import { seedProduction, preferred, buildsOf, draw, drawClass, produceDay, addLine, setFactories, moveLine, switchLine, newLine, optionsFor, assigned, needOf } from '../src/game/production.js';
+import { MODELS, MODEL, CLASSES } from '../src/data/equipment.js';
+import { INVENTORIES } from '../src/data/inventories.js';
 import { haversine } from '../src/util/geo.js';
 
 // A small equirectangular raster: 360 × 180, one pixel per degree.
@@ -139,8 +140,10 @@ test('templates sit on a 5×5 grid with a support column and refuse impossible d
 test('every catalog model is well formed', () => {
   for (const m of MODELS) {
     assert.ok(CLASSES[m.cls], `${m.id} has a known class`);
-    assert.ok(m.q > 0 && m.cost > 0 && m.makers.length, m.id);
+    assert.ok(m.q > 0 && m.cost > 0 && Array.isArray(m.makers) && Array.isArray(m.lic), m.id);
   }
+  // Out-of-production models (no makers) are only held, never offered to a line.
+  assert.equal(optionsFor({ iso3: 'UKR' }, () => true, Date.parse('2025-01-20')).has('t72'), false);
   for (const c of Object.keys(CLASSES)) assert.ok(MODELS.some((m) => m.cls === c && m.makers.includes('*')), `${c} has a generic pattern`);
 });
 
@@ -248,4 +251,52 @@ test('on the real 2025 map both sides start dug in along the Ukrainian front', a
   A._hubsDaily();
   assert.equal(kyiv.level, 5);
   assert.match(A.canUpgradeHub(ukr, kyiv), /highest level/);
+});
+
+test('national inventories name real catalog systems and seed real stock and lines', () => {
+  const START = Date.parse('2025-01-20');
+  for (const iso of ['USA', 'CHN', 'RUS', 'DEU', 'FRA', 'GBR', 'IND', 'TUR', 'UKR', 'POL', 'ISR', 'KOR', 'JPN', 'IRN']) assert.ok(INVENTORIES[iso], `${iso} has an inventory`);
+  for (const [iso, inv] of Object.entries(INVENTORIES)) {
+    for (const [c, e] of Object.entries(inv)) {
+      assert.ok(CLASSES[c], `${iso}.${c} is a class`);
+      for (const [id, k] of Object.entries(e.have ?? {})) assert.ok(MODEL[id]?.cls === c && k > 0, `${iso}.${c} holds ${id}`);
+      for (const b of e.build ?? []) {
+        const id = Array.isArray(b) ? b[0] : b;
+        assert.ok(MODEL[id]?.cls === c, `${iso}.${c} builds ${id}`);
+        assert.ok(MODEL[id].makers.includes(iso) || MODEL[id].makers.includes('*') || MODEL[id].lic.includes(iso), `${iso} has a way to build ${id}`);
+      }
+    }
+  }
+  const seed = (iso, fielded) => {
+    const n = { iso3: iso, gdp: 2000, defPct: 2.5 };
+    seedProduction(n, fielded, optionsFor(n, () => false, START), INVENTORIES[iso]);
+    return n.production;
+  };
+  const fielded = { mbt: 1000, ifv: 1000, spg: 1000, atgm: 1000, fpv: 1000, ammo: 1000, rifles: 1000, uav: 100 };
+  // Ukraine: rated by the mixed Soviet and Western fleet it holds, thin reserves, its own lines.
+  const U = seed('UKR', fielded);
+  const tanks = INVENTORIES.UKR.mbt.have, n = Object.values(tanks).reduce((t, k) => t + k, 0);
+  assert.ok(Math.abs(U.quality.mbt - Object.entries(tanks).reduce((t, [id, k]) => t + MODEL[id].q * k, 0) / n) < 1e-9, 'holdings-weighted rating');
+  assert.equal(U.holdings.mbt[0][0], 't64bv', 'the T-64 is the most numerous Ukrainian tank');
+  assert.equal(U.stock.mbt, Math.round(1000 * INVENTORIES.UKR.mbt.store / n), 'reserve follows real stores');
+  assert.equal(U.stock.fpv, 2000, 'drone reserve multiplier');
+  const built = new Set(U.lines.map((l) => l.model));
+  for (const id of ['bohdana', 'stugna', 'fpv', 't64bv']) assert.ok(built.has(id), `Ukraine builds ${id}`);
+  assert.ok(!built.has('mbt_lic') && !built.has('towed'), 'no generic patterns where it has its own');
+  // Poland: K2 under licence and its own Krab, with no alliance needed.
+  const P = seed('POL', fielded);
+  const k2 = P.lines.find((l) => l.model === 'k2');
+  assert.ok(k2?.licensed && Math.abs(k2.cost - MODEL.k2.cost * 1.3) < 1e-9, 'K2 licence-built');
+  assert.ok(P.lines.some((l) => l.model === 'krab' && !l.licensed));
+  assert.equal(preferred(P, 'ifv').id, 'rosomak', 'Borsuk is not in production until mid-2025');
+  // A class's factories are split between its real models by weight.
+  const R = seed('RUS', fielded);
+  assert.deepEqual(buildsOf(R, 'mbt').map(([id]) => id), ['t90m', 't72b3', 't80bvm']);
+  assert.ok(R.lines.filter((l) => l.cls === 'mbt').length >= 2, 'Russia runs several tank lines');
+  assert.ok(R.quality.mbt < 1 && R.quality.mbt > 0.8, `Russian tank fleet ${R.quality.mbt}`);
+  // A nation with no inventory keeps the generic defaults.
+  const bra = { iso3: 'BRA', gdp: 2000, defPct: 1.1 };
+  seedProduction(bra, fielded, optionsFor(bra, () => false, START));
+  assert.equal(bra.production.stock.mbt, 500);
+  assert.equal(preferred(bra.production, 'mbt').id, 'mbt_lic');
 });
