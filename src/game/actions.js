@@ -2,6 +2,7 @@ import { FACTIONS } from '../data/nations.js';
 import { pairKey, DAY } from './game.js';
 import { POLITICAL_DECISIONS, politicalSystem } from './politicalSystems.js';
 import { transferAid } from './economy.js';
+import { demographicDecisions } from './demographicPolicy.js';
 
 // Domestic decisions available to the player's own government.
 export const DECISIONS = [
@@ -18,7 +19,7 @@ export const DECISIONS = [
 ];
 
 export function domesticDecisions(n) {
-  return [...(POLITICAL_DECISIONS[politicalSystem(n)] ?? []), ...DECISIONS];
+  return [...(POLITICAL_DECISIONS[politicalSystem(n)] ?? []), ...DECISIONS, ...demographicDecisions(n)];
 }
 
 export function decisionState(g, n, d) {
@@ -36,7 +37,8 @@ export function takeDecision(g, n, d) {
   if (!st.ok) return st.why;
   n.pp -= d.cost;
   n.cooldowns[d.id] = g.time + d.cd * DAY;
-  g.applyFx(n, d.fx);
+  if (d.run) d.run(g, n);
+  else g.applyFx(n, d.fx);
   g.log(`${n.name}: ${d.name.toLowerCase()}.`, { nation: n.index, kind: 'politics' });
   return null;
 }

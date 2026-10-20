@@ -128,6 +128,12 @@ const RAW = `
 442|LUX|Luxembourg|Luc Frieden|Prime Minister|Constitutional monarchy|dem|90|0.67|82|10|26|1.0|0.7|49.61,6.13|NATO|EU|1,0,0,0,0,0,0|
 196|CYP|Cyprus|Nikos Christodoulides|President|Presidential republic|dem|34|1.3|60|30|70|3.4|1.8|35.17,33.36||EU|12,82,0,0,0,0,0|
 Kosovo|XKX|Kosovo|Albin Kurti|Prime Minister|Parliamentary republic|nat|11|1.6|50|40|17|4.0|1.5|42.66,21.17|||5,0,0,0,0,0,0|
+020|AND|Andorra|Head of government||Parliamentary co-principality|dem|3.8|0.08|80|5|35|1.5|0|42.51,1.52|||0,0,0,0,0,0,0|
+438|LIE|Liechtenstein|Head of government||Constitutional monarchy|dem|7|0.04|85|5|10|1.5|0|47.14,9.52|||0,0,0,0,0,0,0|
+470|MLT|Malta|Head of government||Parliamentary republic|dem|23|0.56|75|10|50|3|0.5|35.90,14.51||EU|2,0,0,0,0,0,0|
+492|MCO|Monaco|Head of government||Constitutional monarchy|dem|9|0.04|85|5|10|1.5|0|43.73,7.42|||0,0,0,0,0,0,0|
+674|SMR|San Marino|Captains Regent||Parliamentary republic|dem|2|0.034|80|5|65|1.5|0|43.94,12.45|||0,0,0,0,0,0,0|
+336|VAT|Vatican City|Holy See||Ecclesiastical state|the|0.02|0.0008|85|5|10|1|0|41.90,12.45|||0,0,0,0,0,0,0|
 275|PSE|Palestine|Mahmoud Abbas|President|Partially recognised state|aut|18|5.5|5|70|50|-28|0|31.90,35.20|||30,0,0,0,0,0,0|gaza_war
 332|HTI|Haiti|Leslie Voltaire|President of the Transitional Council|Transitional government|dem|25|11.7|5|20|20|-4.0|0.2|18.54,-72.34|||1,0,0,0,0,0,0|gang_rule
 214|DOM|Dominican Republic|Luis Abinader|President|Presidential republic|dem|125|11.4|62|15|60|5.0|0.7|18.49,-69.93|||56,0,10,0,0,2,0|

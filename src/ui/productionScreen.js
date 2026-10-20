@@ -1,6 +1,7 @@
 import { CLASSES, CLASS_IDS, MODEL, MODELS } from '../data/equipment.js';
 import { PRODUCTION, assigned, lineOutput, addLine, setFactories, removeLine, moveLine, switchLine, autoAssign, costOf } from '../game/production.js';
 import { COST } from '../game/templates.js';
+import { hasTech, ratings, TECH } from '../game/research.js';
 import { milTabs } from './milTabs.js';
 import { esc, int } from './format.js';
 
@@ -72,6 +73,9 @@ export class ProductionScreen {
     const used = assigned(n), free = P.factories - used;
     const short = units.armies.demand(n.index);
     const buildable = (cls) => MODELS.filter((m) => m.cls === cls && P.options.has(m.id));
+    // Own designs that research would open, shown greyed out in the picker.
+    const locked = (cls) => MODELS.filter((m) => m.cls === cls && m.tech && !hasTech(n, m.tech) && m.from <= game.time && m.makers.includes(n.iso3));
+    const rated = ratings(n);
     const lines = P.lines.map((l, i) => {
       const m = MODEL[l.model];
       const others = buildable(l.cls).filter((x) => x.id !== l.model);
@@ -85,16 +89,19 @@ export class ProductionScreen {
         <button class="rm" data-rm="${i}" aria-label="Close this line">✕</button>
       </div>`;
     }).join('');
-    const addOpts = CLASS_IDS.map((c) => `<optgroup label="${esc(CLASSES[c].name)}">${buildable(c).map((m) => `<option value="${m.id}">${esc(m.name)} · rating ${(m.q * 100).toFixed(0)} · ${costOf(m, P.options.get(m.id)).toFixed(m.cost < 1 ? 3 : 1)} fd${P.options.get(m.id) ? ' (licence)' : ''}</option>`).join('')}</optgroup>`).join('');
+    const addOpts = CLASS_IDS.map((c) => `<optgroup label="${esc(CLASSES[c].name)}">${buildable(c).map((m) => `<option value="${m.id}">${esc(m.name)} · rating ${(m.q * 100).toFixed(0)} · ${costOf(m, P.options.get(m.id)).toFixed(m.cost < 1 ? 3 : 1)} fd${P.options.get(m.id) ? ' (licence)' : ''}</option>`).join('')}${locked(c).map((m) => `<option value="" disabled>${esc(m.name)} · needs ${esc(TECH[m.tech].name)} (research)</option>`).join('')}</optgroup>`).join('');
     const stock = CLASS_IDS.map((c) => {
       const have = Math.max(0, P.stock[c] ?? 0), made = P.rate[c] ?? 0, burn = P.burn[c] ?? 0;
       const net = made - burn;
       const cover = burn > made + 1e-9 ? have / (burn - made) : Infinity;
       const gap = (short[c] ?? 0) / (COST[c] ?? 1);
+      // The systems the nation started with (data/inventories.js), most numerous first.
+      const held = P.holdings?.[c] ?? [];
+      const sub = held.length ? `<small title="${esc(held.map(([id, k]) => `${MODEL[id].name}: ~${int(k)}`).join('\n'))}">${esc(held.slice(0, 3).map(([id]) => MODEL[id].name).join(' · '))}${held.length > 3 ? ` +${held.length - 3}` : ''}</small>` : '';
       return `<div class="st-row${gap > 0 ? ' short' : ''}">
-        <span class="nm">${esc(CLASSES[c].name)}</span>
+        <span class="nm">${esc(CLASSES[c].name)}${sub}</span>
         <span class="num">${int(have)}</span>
-        <span class="num ${P.quality[c] >= 1.15 ? 'good' : P.quality[c] < 0.9 ? 'warn' : ''}">${Math.round((P.quality[c] ?? 1) * 100)}</span>
+        <span class="num ${rated[c] >= 1.15 ? 'good' : rated[c] < 0.9 ? 'warn' : ''}" title="Stock ${Math.round((P.quality[c] ?? 1) * 100)}, research +${Math.round((n.research?.bonus?.[c] ?? 0) * 100)}%">${Math.round(rated[c] * 100)}</span>
         <span class="num">${fmt(made * MONTH)}</span>
         <span class="num">${fmt(burn * MONTH)}</span>
         <span class="num ${net < -1e-9 ? 'bad' : net > 1e-9 ? 'good' : 'dim'}">${net >= 0 ? '+' : '−'}${fmt(Math.abs(net) * MONTH)}</span>
@@ -117,13 +124,13 @@ export class ProductionScreen {
           <h2>Production lines</h2>
           <div class="pl-list">${lines || '<p class="note">No lines.</p>'}</div>
           <div class="pl-add"><select data-addline ${free && P.lines.length < PRODUCTION.maxLines ? '' : 'disabled'} aria-label="Add a production line"><option value="">${free ? '＋ Add a production line…' : 'Free a factory to add a line'}</option>${addOpts}</select></div>
-          <p class="sup-note">Rating is a game estimate of each system against its class. Your own designs and generic patterns are built at list cost; allies' designs under licence cost 30% more. ${P.auto ? 'The general staff rebalances lines toward shortages every month; changing a line takes manual control.' : ''}</p>
+          <p class="sup-note">Rating is a game estimate of each system against its class. Your own designs and generic patterns are built at list cost; allies' designs under licence cost 30% more. Greyed-out models need research first (<button class="lnk" data-miltab="research">Research</button>). ${P.auto ? 'The general staff rebalances lines toward shortages every month; changing a line takes manual control.' : ''}</p>
         </section>
         <section class="sup-sec">
           <h2>Stockpile</h2>
           <div class="st-row head"><span>Equipment</span><span>In stock</span><span>Rating</span><span>Made / mo</span><span>Used / mo</span><span>Net / mo</span><span>Lasts</span><span>Short</span></div>
           ${stock}
-          <p class="sup-note">Rating is the average standard of the stock, moving toward what the lines build; division stats scale with it. “Short” is what under-strength divisions, those in training, and a month of artillery and drone use still need beyond the stock.</p>
+          <p class="sup-note">Rating is the average standard of the stock, moving toward what the lines build, raised by researched class improvements; division stats scale with it. “Short” is what under-strength divisions, those in training, and a month of artillery and drone use still need beyond the stock.</p>
         </section>
       </div>`;
     if (html === this._html) return;

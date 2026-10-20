@@ -1,7 +1,7 @@
 import * as THREE from 'three';
 import { DEG, ll2v, v2ll, wrapLon } from '../util/geo.js';
 
-const MIN_DIST = 0.00006; // ~400 m: low enough to see individual vehicles in a street
+const MIN_DIST = 0.000006; // ~40 m: street level, close enough to see true-scale pedestrians
 const MAX_DIST = 4.2;
 
 // Scratch objects reused every frame and every pick.
@@ -184,7 +184,7 @@ export class GlobeCamera {
     cam.position.copy(P).add(off);
     cam.up.copy(fwd).multiplyScalar(Math.cos(t)).addScaledVector(P, Math.sin(t));
     cam.lookAt(P);
-    cam.near = Math.max(0.000005, this.dist * 0.04);
+    cam.near = Math.max(0.0000002, this.dist * 0.04);
     cam.far = this.dist + 8;
     // The projection only depends on these (view offsets update it themselves when set), so it is
     // rebuilt only when one of them moved; once the zoom settles that is most frames.

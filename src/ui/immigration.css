@@ -1,0 +1,73 @@
+.imm-ledger { margin-top: 40px; padding-top: 32px; border-top: 1px solid var(--hair-strong); }
+.imm-heading { display: flex; align-items: start; justify-content: space-between; gap: 24px; }
+.imm-heading h2 { margin: 0; font: 600 34px/1.1 var(--display); }
+.imm-heading p { margin: 8px 0 0; color: var(--signal); }
+.imm-heading .btn { flex: none; }
+.imm-note, .imm-ledger p { max-width: 76ch; }
+.imm-note { color: #aeb5ba; font-size: 12px; margin: 18px 0; }
+.imm-metrics { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 20px; margin: 24px 0; }
+.imm-metrics dt { color: #aeb5ba; font-size: 12px; }
+.imm-metrics dd { font-size: 19px; margin: 6px 0; overflow-wrap: anywhere; }
+.imm-metrics small { display: block; color: #aeb5ba; font-size: 11px; }
+.imm-composition { display: flex; height: 12px; gap: 2px; margin: 28px 0 12px; }
+.imm-region-0 { background: #8fa2af; }
+.imm-region-1 { background: #ffb547; }
+.imm-region-2 { background: #86b8a2; }
+.imm-region-3 { background: #b2a1cb; }
+.imm-tabs { display: flex; align-items: center; flex-wrap: wrap; flex: none; gap: 4px; border-bottom: 1px solid var(--hair-strong); }
+.imm-tabs button { padding: 12px 16px; min-height: 44px; color: #c4c9cd; border-bottom: 2px solid transparent; }
+.imm-tabs button:hover { background: #1b2328; color: var(--ink); }
+.imm-tabs button[aria-pressed="true"] { border-color: var(--signal); color: var(--signal); background: #1b2023; }
+.imm-tabs span { margin-left: auto; padding: 8px 16px; color: #aeb5ba; font-size: 12px; }
+.imm-controls { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 16px; margin: 24px 0; }
+.imm-controls label { display: grid; gap: 8px; color: #aeb5ba; font-size: 12px; }
+.imm-controls select { min-width: 0; width: 100%; min-height: 44px; color: var(--ink); background: var(--panel-solid); border: 1px solid var(--hair-strong); padding: 8px; font: inherit; }
+.imm-controls select:disabled { opacity: .55; }
+.imm-cohort-summary { display: flex; justify-content: space-between; align-items: baseline; gap: 16px; }
+.imm-cohort-summary h3, .imm-policy h3, .imm-outcomes h3 { margin: 16px 0; font: 600 26px/1.2 var(--display); }
+.imm-cohort-summary p { color: #c4c9cd; font-size: 12px; }
+.imm-table-scroll { max-height: 440px; overflow: auto; border-top: 1px solid var(--hair-strong); border-bottom: 1px solid var(--hair-strong); scrollbar-color: var(--steel) var(--panel-solid); scrollbar-width: thin; }
+.imm-cohorts { border-collapse: collapse; width: 100%; min-width: 940px; text-align: left; font-size: 12px; }
+.imm-cohorts th, .imm-cohorts td { padding: 10px 12px; border-bottom: 1px solid var(--hair); vertical-align: top; }
+.imm-cohorts th { font-weight: 500; }
+.imm-cohorts thead th { position: sticky; top: 0; background: #151c20; color: #c4c9cd; z-index: 1; }
+.imm-cohorts tbody th { min-width: 220px; }
+.imm-cohorts tbody tr:hover { background: #141a1e; }
+.imm-cohorts small { display: block; color: #aeb5ba; font-size: 11px; margin-top: 4px; }
+.imm-detail { border-bottom: 1px solid var(--hair); padding: 16px 0; }
+.imm-detail summary { cursor: pointer; min-height: 28px; color: #c4c9cd; }
+.imm-detail p { color: #aeb5ba; font-size: 12px; }
+.imm-policy { padding-top: 20px; }
+.imm-policy > p, .imm-outcomes p { color: #aeb5ba; font-size: 13px; line-height: 1.6; }
+.imm-doctrines { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; margin: 20px 0 28px; }
+.imm-doctrines button { text-align: left; border: 1px solid var(--hair-strong); padding: 16px; min-height: 90px; }
+.imm-doctrines button span { display: block; font: 500 23px/1.1 var(--display); }
+.imm-doctrines button small, .imm-programs button small { display: block; margin-top: 10px; color: #aeb5ba; font-size: 12px; }
+.imm-doctrines button:hover:not(:disabled), .imm-programs button:hover:not(:disabled) { background: #1b2328; border-color: var(--signal); }
+.imm-doctrines button:disabled, .imm-programs button:disabled { opacity: .55; cursor: default; }
+.imm-programs { display: grid; grid-template-columns: 1fr 1fr; column-gap: 32px; }
+.imm-programs button { display: flex; justify-content: space-between; align-items: center; gap: 12px; min-height: 58px; text-align: left; padding: 12px 0; border-bottom: 1px solid var(--hair); }
+.imm-programs button small { flex: none; margin: 0; }
+.imm-outcomes { margin-top: 32px; padding-top: 16px; border-top: 1px solid var(--hair-strong); }
+.imm-outcomes li { padding: 8px 0; }
+.imm-outcomes time { color: #aeb5ba; margin-left: 12px; font-size: 12px; }
+.imm-observer, .imm-empty { color: #aeb5ba; }
+.imm-ledger :focus-visible, .imm-tabs :focus-visible { outline: 2px solid var(--signal); outline-offset: 3px; }
+.imm-projection p { color: #b8c2c9; }
+@media (max-width: 800px) {
+  .imm-heading, .imm-cohort-summary { flex-direction: column; gap: 12px; }
+  .imm-controls, .imm-metrics { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .imm-doctrines, .imm-programs { grid-template-columns: 1fr; }
+  .imm-doctrines { gap: 10px; }
+  .imm-doctrines button { min-height: 76px; }
+  .imm-tabs span { width: 100%; margin-left: 0; }
+}
+@media (max-width: 420px) {
+  .imm-controls { grid-template-columns: 1fr; }
+  .imm-metrics { gap: 16px 12px; }
+  .imm-metrics dd { font-size: 16px; }
+  .imm-heading .btn { white-space: normal; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .focus-viewport { scroll-behavior: auto; }
+}

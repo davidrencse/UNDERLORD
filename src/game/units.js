@@ -8,6 +8,8 @@ import { doctrine } from '../world/unitModels.js';
 import { Armies, ordinal } from './armies.js';
 import { seedTemplates, defaultTemplate, sideProfile, strike, restat } from './templates.js';
 import { seedProduction, needOf, draw, drawClass, optionsFor } from './production.js';
+import { seedResearch, hasTech, ratings } from './research.js';
+import { INVENTORIES } from '../data/inventories.js';
 
 export const TYPES = {
   armor: { label: 'Armoured', domain: 'land', speed: 9, atk: 1.55, def: 1.0, men: 15000 },
@@ -153,11 +155,14 @@ export class Units {
       f.fpv = (f.fpv ?? 0) + s.tpl.stats.fpv * s.divs * 24 * 30;
     }
     const g = this.game, byIso = this.world.byIso;
+    // Technologies first: they decide which models can be built.
+    for (const n of g.live()) seedResearch(n);
+    const partnerHas = (iso, tech) => hasTech(byIso.get(iso), tech);
     for (const n of g.live()) {
       const isPartner = (iso) => { const m = byIso.get(iso); return !!m && m !== n && g.allied(n.index, m.index); };
-      seedProduction(n, fielded.get(n.index) ?? {}, optionsFor(n, isPartner, g.time));
-      // Templates are rated by the standard of the equipment the nation builds.
-      for (const t of n.templates) restat(t, n.production.quality);
+      seedProduction(n, fielded.get(n.index) ?? {}, optionsFor(n, isPartner, g.time, partnerHas), INVENTORIES[n.iso3]);
+      // Templates are rated by the standard of the equipment the nation builds, and its research.
+      for (const t of n.templates) restat(t, ratings(n));
     }
   }
 

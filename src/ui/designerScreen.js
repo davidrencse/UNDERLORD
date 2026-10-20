@@ -2,6 +2,7 @@ import { BATTALIONS, BATTALION_IDS, SUPPORT, SUPPORT_IDS, EQUIPMENT, COLS, ROWS,
 import { MODEL } from '../data/equipment.js';
 import { trainingLines } from '../game/armies.js';
 import { preferred } from '../game/production.js';
+import { ratings } from '../game/research.js';
 import { counter } from './symbols.js';
 import { milTabs } from './milTabs.js';
 import { esc, int } from './format.js';
@@ -84,12 +85,12 @@ export class DesignerScreen {
       const name = dr.name.trim() || 'Division';
       const existing = d.save !== undefined && n.templates.find((t) => t.id === dr.id);
       if (existing) {
-        const t = makeTemplate(existing.id, name, dr.grid, dr.support, n.production.quality);
+        const t = makeTemplate(existing.id, name, dr.grid, dr.support, ratings(n));
         Object.assign(existing, { name: t.name, grid: t.grid, support: t.support, bats: t.bats, stats: t.stats });
         units.retemplate(n.index, existing);
         toast(`${name} updated. Divisions on it refit to the new organisation.`);
       } else {
-        const t = makeTemplate(`t${n.nextTemplate++}`, name, dr.grid, dr.support, n.production.quality);
+        const t = makeTemplate(`t${n.nextTemplate++}`, name, dr.grid, dr.support, ratings(n));
         n.templates.push(t);
         dr.id = t.id;
         toast(`${name} saved.`);
@@ -137,7 +138,7 @@ export class DesignerScreen {
     const n = game.nations[game.player];
     if (!n || !this.draft) return;
     const dr = this.draft;
-    const st = templateStats(dr.grid, dr.support, n.production.quality);
+    const st = templateStats(dr.grid, dr.support, ratings(n));
     const why = templateProblem(dr.grid, dr.support);
     const saved = n.templates.find((t) => t.id === dr.id);
     const dirty = !saved || this._changed(saved);
@@ -208,6 +209,7 @@ export class DesignerScreen {
             ${stat('Electronic warfare', pct(st.ew), 'jams enemy drones and spotting')}
             ${stat('Counter-drone', pct(st.cdrone), 'downs enemy strike drones')}
             ${stat('Air defence', pct(st.aa), 'cancels enemy air support')}
+            ${st.ewResist || st.jamResist ? stat('Against enemy EW', [st.ewResist && `drones ${pct(st.ewResist)}`, st.jamResist && `spotting ${pct(st.jamResist)}`].filter(Boolean).join(' · '), 'of enemy jamming shrugged off (research)') : ''}
             ${st.ammo || st.fpv ? stat('In battle uses', [st.ammo && `${st.ammo} rounds/h`, st.fpv && `${st.fpv} drones/h`].filter(Boolean).join(' · '), 'from the stockpile; short of it, guns and drones go quiet') : ''}
             ${supportFx.length ? stat('Support', '', supportFx.join(' · ')) : ''}
             <h2>Against</h2>

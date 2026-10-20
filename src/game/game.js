@@ -5,6 +5,10 @@ import { CRISES } from './crises.js';
 import { politicalPressure, politicalSystem } from './politicalSystems.js';
 import { createBudget, budgetEffects } from './budget.js';
 import { createEconomy, createWorldEconomy, economyMonth, economyStab, adjustDebt, applyEconomyFx, dailyEconomy } from './economy.js';
+import { IMMIGRATION_TREES } from '../data/immigration.js';
+import { DEMOGRAPHIC_TREE } from '../data/demographicDoctrine.js';
+import { createDemographicPolicy, applyDemographicEffect, demographicMonth } from './demographicPolicy.js';
+import { createImmigration, applyImmigration, immigrationPartyDrift } from './immigration.js';
 
 export const START = Date.UTC(2025, 0, 20, 12);
 export const SPEEDS = [0, 2, 6, 16, 40, 120]; // game hours per real second
@@ -161,6 +165,8 @@ export class Game {
 
       // The economy calibrates itself to the starting growth and inflation, net of spirits.
       n.econ = createEconomy(n, this.effects(n));
+      n.immigration = createImmigration(n);
+      n.demographicPolicy = createDemographicPolicy();
       // Capture the starting equilibrium so the world holds still until something changes it.
       const fx = this.effects(n);
       n.base = {
@@ -392,7 +398,7 @@ export class Game {
 
     const exhaustion = clamp(n.casualties / Math.max(1, n.pop * 1000) * 2500, 0, 30);
     n.exhaustion = exhaustion;
-    const stabTarget = clamp(n.base.stab + fx.stab + fiscal.stab + this._econStab(n) + economyStab(n) + this._loyaltyStab(n) + politicalPressure(n).stab - exhaustion * 0.4, 0, 100);
+    const stabTarget = clamp(n.base.stab + fx.stab + fiscal.stab + this._econStab(n) + economyStab(n) + this._loyaltyStab(n) + politicalPressure(n).stab + (n.immigration?.stability ?? 0) + (n.demographicPolicy?.stability ?? 0) - exhaustion * 0.4, 0, 100);
     n.stability += (stabTarget - n.stability) * 0.025;
     const enemies = this.enemiesOf(n.index);
     const defensive = enemies.size &&this.wars.some((w) => w.d.has(n.index));
@@ -410,6 +416,7 @@ export class Game {
     this._partyDrift(n);
     if (politicalSystem(n) === 'party' && n.politics.congress && this.time >= parseDay(n.politics.congress)) this.holdPartyCongress(n);
     this._focusTick(n);
+    if (this._monthStart) demographicMonth(this, n);
     if (n.justifying && this.time >= n.justifying.until) {
       n.wargoals.add(n.justifying.target);
       if (n.index === this.player) this.log(`War goal against ${this.nations[n.justifying.target].name} is ready.`, { nation: n.index, kind: 'diplo' });
@@ -428,6 +435,7 @@ export class Game {
     for (const p of pol.list) {
       const ruling = pol.ruling.includes(p.id);
       let d = (this.r() - 0.5) * 0.06;
+      d += immigrationPartyDrift(n, p);
       if (ruling) d -= unhappy * 0.02;
       else if (p.ideo === 'nat' && this.hasSpirit(n, 'refugee_pressure')) d += 0.02;
       else d += unhappy * 0.008;
@@ -489,12 +497,31 @@ export class Game {
   }
 
   // ---------------------------------------------------------------- focus trees
-  tree(n) { return FOCUS_TREES[n.focus.tree]; }
+  tree(n, category) {
+    const national = FOCUS_TREES[n.focus.tree];
+    const immigration = IMMIGRATION_TREES[n.iso3];
+    if (category === 'national') return national;
+    if (category === 'immigration') return immigration;
+    if (category === 'demographic') return DEMOGRAPHIC_TREE;
+    this._combinedTrees ??= new Map();
+    const key = `${n.iso3}:${n.focus.tree}`;
+    if (!this._combinedTrees.has(key)) this._combinedTrees.set(key, { ...national, focuses: [...national.focuses, ...(immigration?.focuses ?? []), ...DEMOGRAPHIC_TREE.focuses] });
+    return this._combinedTrees.get(key);
+  }
   focusState(n, f) {
     if (n.focus.done.has(f.id)) return 'done';
     if (n.focus.current?.id === f.id) return 'active';
     const tree = this.tree(n);
     if (f.mutex?.some((m) => n.focus.done.has(m) || n.focus.current?.id === m)) return 'blocked';
+    if (f.category === 'immigration') {
+      const isExcluded = (id) => {
+        const parent = tree.focuses.find((item) => item.id === id);
+        return parent && this.focusState(n, parent) === 'blocked';
+      };
+      if (f.req?.length && (f.reqAll ? f.req.some(isExcluded) : f.req.every(isExcluded))) return 'blocked';
+      if (f.requiresAny?.length && f.requiresAny.every(isExcluded)) return 'blocked';
+    }
+    if (f.requiresAny?.length && !f.requiresAny.some((r) => n.focus.done.has(r))) return 'locked';
     if (f.req?.length) {
       const ok = f.reqAll ? f.req.every((r) => n.focus.done.has(r)) : f.req.some((r) => n.focus.done.has(r));
       if (!ok) return 'locked';
@@ -513,15 +540,17 @@ export class Game {
     const tree = this.tree(n);
     if (!n.focus.current && n.index !== this.player) {
       // Same draws as before: one roll when anything is available, a second to pick. The list is only built on a hit.
-      if (tree.focuses.some((f) => this.focusState(n, f) === 'available') && this.r() < 0.05) {
-        const avail = tree.focuses.filter((f) => this.focusState(n, f) === 'available');
+      // Focuses may carry an AI gate, e.g. democracies never pick coercive demographic doctrine.
+      const pickable = (f) => this.focusState(n, f) === 'available' && (!f.ai || f.ai(n));
+      if (tree.focuses.some(pickable) && this.r() < 0.05) {
+        const avail = tree.focuses.filter(pickable);
         n.focus.current = { id: avail[Math.floor(this.r() * avail.length)].id, progress: 0, days: 0 };
       }
     }
     const c = n.focus.current;
     if (!c) return;
     const f = tree.focuses.find((x) => x.id === c.id);
-    c.progress += 1;
+    c.progress += 1 + (f.category === 'demographic' ? n.demographicPolicy.researchSpeed : 0);
     if (c.progress >= f.days) {
       n.focus.done.add(f.id);
       n.focus.current = null;
@@ -542,6 +571,8 @@ export class Game {
     if (fx.infl) n.mods.infl += fx.infl;
     if (fx.debt) adjustDebt(n, fx.debt);
     if (fx.econ) applyEconomyFx(this, n, fx.econ);
+    if (fx.immigration) applyImmigration(n, fx.immigration);
+    if (fx.demographic) applyDemographicEffect(this, n, fx.demographic);
     if (fx.defPct) {
       n.defPct += fx.defPct;
       if (n.budget) n.budget.lines.military.value = n.defPct;

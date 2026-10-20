@@ -14,6 +14,7 @@
 
 import { MODELS, MODEL, CLASS_IDS, LICENCE } from '../data/equipment.js';
 import { COST } from './templates.js';
+import { hasTech } from './research.js';
 
 export const PRODUCTION = {
   bnPerFactory: 3,
@@ -32,22 +33,38 @@ export const assigned = (n) => n.production.lines.reduce((t, l) => t + l.factori
 export const lineOutput = (l) => (Math.min(l.factories, PRODUCTION.maxPerLine) * l.eff) / l.cost; // items per day
 
 // Models a nation may build: its own designs and generic patterns at list cost, and its partners'
-// designs under licence. `isPartner(iso3)` says whether the maker is an ally.
-export function optionsFor(n, isPartner, time) {
+// designs under licence. `isPartner(iso3)` says whether the maker is an ally. A model that needs
+// research is open to a nation that has the technology, and under licence from a partner that has
+// it (`partnerHas(iso3, tech)`).
+export function optionsFor(n, isPartner, time, partnerHas = () => false) {
   const out = new Map();
   for (const m of MODELS) {
     if (m.from > time) continue;
-    if (m.makers.includes(n.iso3) || m.makers.includes('*')) out.set(m.id, false);
-    else if (m.makers.some(isPartner)) out.set(m.id, true);
+    const known = hasTech(n, m.tech);
+    if (m.makers.includes(n.iso3) || m.makers.includes('*')) { if (known) out.set(m.id, false); }
+    else if (m.makers.some((iso) => isPartner(iso) && (known || partnerHas(iso, m.tech)))) out.set(m.id, true);
+    // A real licence agreement (K2 in Poland, T-90S in India) holds whatever the alliances.
+    else if (m.lic.includes(n.iso3) && (known || m.makers.some((iso) => partnerHas(iso, m.tech)))) out.set(m.id, true);
   }
   return out;
 }
 export const costOf = (m, licensed) => m.cost * (licensed ? LICENCE : 1);
 
-// The model a nation would build in a class: the best it makes itself, else the best licensed,
-// else the generic pattern. Consumables are judged on rating per factory-day, since volume wins.
+// The models a nation builds in a class, as [id, weight]: the lines its industry really runs
+// (data/inventories.js) where it may build them, else the one model it would choose.
+export function buildsOf(P, cls) {
+  const real = (P.builds?.[cls] ?? []).map((b) => (Array.isArray(b) ? b : [b, 1])).filter(([id]) => P.options.has(id));
+  if (real.length) return real;
+  const m = preferred(P, cls, false);
+  return m ? [[m.id, 1]] : [];
+}
+
+// The model a nation would build in a class: the first of its real lines, else the best it makes
+// itself, else the best licensed, else the generic pattern. Consumables are judged on rating per
+// factory-day, since volume wins.
 const CONSUMABLE = new Set(['ammo', 'fpv']);
-export function preferred(P, cls) {
+export function preferred(P, cls, real = true) {
+  if (real) { const b = buildsOf(P, cls)[0]; if (b) return MODEL[b[0]]; }
   let best = null, bestScore = -1;
   for (const [id, lic] of P.options) {
     const m = MODEL[id];
@@ -63,23 +80,48 @@ export function newLine(P, id, factories, eff = PRODUCTION.startEff) {
   return { model: id, cls: m.cls, factories, eff, cost: costOf(m, lic), licensed: !!lic };
 }
 
-// Sets up factories, a reserve stockpile (half of what the army fields, and two months of artillery
-// fire) and lines in proportion to the value of that army's equipment.
-export function seedProduction(n, fielded, options) {
-  const P = n.production = { factories: factoriesFor(n), lines: [], stock: {}, quality: {}, options, used: {}, rate: {}, burn: {}, auto: true };
+// Sets up factories, a reserve stockpile and lines in proportion to the value of the army's
+// equipment. With a national inventory (data/inventories.js) each class is rated by the systems
+// the nation holds, weighted by number, its reserve follows its real stores, and its lines build
+// what its industry builds. Without one, a class is rated as the model the nation would build and
+// the reserve is half of what the army fields (and two months of artillery fire).
+export function seedProduction(n, fielded, options, inv = null) {
+  const P = n.production = { factories: factoriesFor(n), lines: [], stock: {}, quality: {}, options, used: {}, rate: {}, burn: {}, auto: true, builds: {}, holdings: {} };
   for (const c of CLASS_IDS) {
-    const m = preferred(P, c);
-    const lic = m && P.options.get(m.id);
-    P.quality[c] = m ? m.q * (lic ? 0.95 : 1) : 0.8;
-    P.stock[c] = Math.round((fielded[c] ?? 0) * (c === 'ammo' || c === 'fpv' ? 1 : 0.5));
+    const e = inv?.[c] ?? {};
+    if (e.build) P.builds[c] = e.build;
+    const have = Object.entries(e.have ?? {}).filter(([id, k]) => MODEL[id]?.cls === c && k > 0).sort((a, b) => b[1] - a[1]);
+    const held = have.reduce((t, [, k]) => t + k, 0);
+    if (held) {
+      P.holdings[c] = have;
+      P.quality[c] = have.reduce((t, [id, k]) => t + MODEL[id].q * k, 0) / held;
+    } else {
+      const m = preferred(P, c);
+      const lic = m && P.options.get(m.id);
+      P.quality[c] = m ? m.q * (lic ? 0.95 : 1) : 0.8;
+    }
+    const k = e.reserve ?? (held && e.store != null ? Math.min(1.5, e.store / held) : c === 'ammo' || c === 'fpv' ? 1 : 0.5);
+    P.stock[c] = Math.round((fielded[c] ?? 0) * k);
   }
   const value = {};
   for (const c of CLASS_IDS) value[c] = (fielded[c] ?? 0) * (COST[c] ?? 1) * (c === 'ammo' || c === 'fpv' ? 0.05 : 1);
   autoAssign(n, value, 1);
 }
 
-// Spreads the factories over the classes in `want` (factory-days of demand), building the
-// preferred model of each. Lines already building that model keep their efficiency.
+// Splits `k` factories between models by weight, each model used getting at least one.
+function splitByWeight(k, list) {
+  const use = list.slice(0, Math.min(k, list.length));
+  const W = use.reduce((t, [, w]) => t + w, 0);
+  const out = use.map(([id, w]) => [id, Math.max(1, Math.floor((k * w) / W))]);
+  let left = k - out.reduce((t, x) => t + x[1], 0);
+  for (let i = 0; left !== 0; i = (i + 1) % out.length) {
+    if (left > 0) { out[i][1]++; left--; } else if (out[i][1] > 1) { out[i][1]--; left++; }
+  }
+  return out;
+}
+
+// Spreads the factories over the classes in `want` (factory-days of demand), building the models
+// each class is built from (buildsOf). Lines already building a model keep their efficiency.
 export function autoAssign(n, want, eff = PRODUCTION.startEff) {
   const P = n.production;
   const keep = new Map(P.lines.map((l) => [l.model, l.eff]));
@@ -91,17 +133,25 @@ export function autoAssign(n, want, eff = PRODUCTION.startEff) {
   const floor = Math.min(shares.length, P.factories);
   let left = P.factories - floor;
   const scale = left / Math.max(1e-9, shares.slice(0, floor).reduce((t, x) => t + Math.max(0, x.f - 1), 0));
+  // Lines beyond one per class, for second models and for shares too big for one line.
+  let spare = PRODUCTION.maxLines - floor;
   for (const [i, { c, f }] of shares.entries()) {
-    const m = preferred(P, c);
-    if (!m || i >= floor) continue;
-    // Big shares are split over several lines, as no line can use more than its maximum.
+    const list = buildsOf(P, c);
+    if (!list.length || i >= floor) continue;
     const extra = Math.min(left, Math.round(Math.max(0, f - 1) * Math.min(1, scale)));
     left -= extra;
-    let k = 1 + extra;
-    while (k > 0 && P.lines.length < PRODUCTION.maxLines) {
-      const take = Math.min(k, PRODUCTION.maxPerLine);
-      P.lines.push(newLine(P, m.id, take, keep.get(m.id) ?? eff));
-      k -= take;
+    const k = 1 + extra;
+    const parts = splitByWeight(k, list.slice(0, 1 + Math.max(0, spare)));
+    spare -= parts.length - 1;
+    for (const [id, share] of parts) {
+      // Big shares are split over several lines, as no line can use more than its maximum.
+      let r = share;
+      while (r > 0 && P.lines.length < PRODUCTION.maxLines) {
+        const take = Math.min(r, PRODUCTION.maxPerLine);
+        if (P.lines.some((l) => l.model === id)) spare--;
+        P.lines.push(newLine(P, id, take, keep.get(id) ?? eff));
+        r -= take;
+      }
     }
   }
   P.lines.sort((a, b) => b.factories - a.factories);

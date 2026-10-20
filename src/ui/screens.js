@@ -19,6 +19,7 @@ export class DossierScreen {
     root.appendChild(this.el);
     this.el.addEventListener('click', (e) => {
       if (e.target.closest('[data-x]')) this.close();
+      if (e.target.closest('[data-demographics]')) this.ctx.openDemographics(this.nation);
       const nb = e.target.closest('[data-nation]');
       if (nb) this.open(+nb.dataset.nation);
     });
@@ -58,6 +59,7 @@ export class DossierScreen {
             <div><div class="k">GDP</div><div class="v">${money(n.gdp)}</div></div>
           </div>
         </div>
+        <div class="dossier-links"><button class="btn" data-demographics>View demographics</button></div>
 
         <div class="dgrid">
           <section class="c7"><h2>Government <em>${n.politics.next ? `next election ${day(Date.parse(n.politics.next))}` : n.politics.congress ? `next Party Congress ${day(Date.parse(n.politics.congress))}` : 'no scheduled election'}</em></h2>
@@ -163,6 +165,7 @@ export class EventModal {
       this.el.hidden = true;
       game.paused = this.wasPaused;
       this.ctx.refreshTop();
+      this.ctx.refreshScreens?.();
       this.next();
     });
   }

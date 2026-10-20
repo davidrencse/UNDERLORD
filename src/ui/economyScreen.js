@@ -3,7 +3,7 @@ import { BUDGET_LINES, budgetChangeState, changeBudget, budgetLoanState, takeBud
 import {
   SECTORS, COMMODITIES, COMMODITY_IDS, LAWS, PROJECTS, MAX_PROJECTS, TAXES, LAW_COST, lawOption,
   lawChangeState, changeLaw, taxChangeState, changeTax, tariffChangeState, changeTariff, rateChangeState, changeRate,
-  subsidyChangeState, changeSubsidy, queueProject, cancelProject, moveProject, projectCost, sectorShares, OUT_PER_FACTORY,
+  subsidyChangeState, changeSubsidy, cancelProject, moveProject, projectCost, sectorShares, OUT_PER_FACTORY,
 } from '../game/economy.js';
 
 export const ECON_TABS = [
@@ -84,6 +84,8 @@ export class EconomyScreen {
     let why = null, ok = null;
     if (d.x !== undefined) { this.close(); return; }
     if (d.etab) { this.open(d.etab); return; }
+    if (d.map !== undefined) { this.close(); this.ctx.setMode(7); return; }
+    if (d.site) { this.close(); this.ctx.openConstruction(d.site); return; }
     if (d.production !== undefined) { this.close(); this.ctx.openMilitary('production'); return; }
     if (d.budget) { why = changeBudget(game, n, d.budget, +d.dir); ok = 'Funding updated.'; }
     else if (d.loan) { why = takeBudgetLoan(game, n, d.loan); ok = 'Borrowing updated.'; }
@@ -91,7 +93,6 @@ export class EconomyScreen {
     else if (d.tariff) why = changeTariff(game, n, +d.tariff);
     else if (d.rate) why = changeRate(game, n, +d.rate, +(d.step ?? 0.25));
     else if (d.sub) why = changeSubsidy(game, n, d.sub, +d.dir);
-    else if (d.build) { why = queueProject(n, d.build); ok = `${PROJECTS[d.build].name} queued.`; }
     else if (d.cancel) cancelProject(n, +d.cancel);
     else if (d.up) moveProject(n, +d.up, -1);
     else if (d.down) moveProject(n, +d.down, 1);
@@ -230,6 +231,7 @@ export class EconomyScreen {
       ['Other services (fixed)', n.budget.other],
       ['Industrial subsidies', E.subsidyPct],
       ['War operations', E.warOps],
+      ['Immigration programs', E.migrationSpend],
       ['Interest on the debt', E.interestPct],
     ].filter(([, v]) => Math.abs(v) > 0.005).map(([k, v]) => `<div class="acc-row"><span>${k}</span><b class="num">${pct(v, 2)}</b><small class="num">${amount(v)}</small></div>`).join('');
     const taxRow = (t) => {
@@ -285,7 +287,7 @@ export class EconomyScreen {
       const left = p.cost - p.paid;
       const eta = p.rate > 0.01 ? Math.ceil(left / (perMonth * p.rate)) : null;
       return `<div class="ec-row proj">
-        <span class="nm">${esc(def.name)}<small>${p.kind === 'arms' ? `+${p.factories} military factor${p.factories === 1 ? 'y' : 'ies'}` : esc(def.desc)}</small></span>
+        <span class="nm">${esc(def.name)}<small>${esc(def.desc)}${p.city ? ` · ${esc(p.city)}` : ''}</small></span>
         <span class="num">${usd(p.cost)}</span>
         <span class="ub">${bar(p.paid / p.cost, 2, 2)}<b class="num">${Math.floor((p.paid / p.cost) * 100)}%</b></span>
         <span class="num ${p.rate < 0.99 ? 'warn' : 'dim'}">${p.rate > 0.01 ? `${Math.round(p.rate * 100)}% speed` : 'waiting'}</span>
@@ -298,7 +300,7 @@ export class EconomyScreen {
         <span class="nm">${esc(def.name)}<small>${esc(def.desc)}</small></span>
         <span class="num">${usd(projectCost(n, k))}</span>
         <span class="num dim">${Math.round(def.days / 30)} months at full speed</span>
-        <button class="up" data-build="${k}" ${full ? 'disabled' : ''}>Queue</button>
+        <button class="up" data-site="${k}" ${full ? 'disabled' : ''}>Place</button>
       </div>`).join('');
     const con = E.sectors.construction;
     return `
@@ -315,8 +317,8 @@ export class EconomyScreen {
         ${queue || '<p class="note">Nothing under construction. Queue a project below.</p>'}
       </section>
       <section class="sup-sec">
-        <h2>Projects</h2>
-        <p class="sup-note">Costs scale with the sector they expand. ${full ? `The queue is full (${MAX_PROJECTS}).` : ''}</p>
+        <h2>Projects <button class="btn" data-map>Place on map</button></h2>
+        <p class="sup-note">Costs reflect the capacity each building adds. Offices and office complexes require a city. ${full ? `The queue is full (${MAX_PROJECTS}).` : ''}</p>
         ${options}
       </section>`;
   }
@@ -350,13 +352,14 @@ export class EconomyScreen {
       </section>
       <section class="sup-sec">
         <h2>Arms industry</h2>
-        <p class="sup-note">Military factories are real plant. Defence spending funds one factory per $3bn a year; each turns $${OUT_PER_FACTORY.toFixed(2)}bn of metals, energy and labour into equipment. Arms makers expand slowly when orders outrun plant. Build arms plants in Construction, or adopt the war economy to convert civilian factories.</p>
+        <p class="sup-note">Military factories are real plant. Defence spending funds one factory per $3bn a year; each turns $${OUT_PER_FACTORY.toFixed(2)}bn of metals, energy and labour into equipment. Arms makers expand slowly when orders outrun plant. Build military factories or complexes in Construction, or adopt the war economy to convert civilian factories.</p>
         <div class="sup-kpis">
           <div><span>Funded by the budget</span><b class="num">${E.milFunded.toFixed(0)}</b><small>factories · ${pct(n.budget.lines.military.value, 2)} of GDP</small></div>
           <div><span>Plant capacity</span><b class="num">${E.milCap.toFixed(0)}</b><small>${Math.round(capUsed * 100)}% in use</small></div>
           <div><span>Running</span><b class="num ${E.milLimit !== 'budget' ? 'warn' : ''}">${E.milUsed.toFixed(0)}</b><small>limited by ${limit}</small></div>
           <div><span>On production lines</span><b class="num">${E.milFactories}</b><small><button class="lnk" data-production>Open production</button></small></div>
         </div>
+        <p class="sup-note">Constructed transport facilities: ${E.facilities.airports} airports · ${E.facilities.dockyards} dockyards. Their projects also expand services or manufacturing capacity.</p>
       </section>`;
   }
 
