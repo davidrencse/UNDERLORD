@@ -131,16 +131,18 @@ function fallbackNation(key, name, area) {
 }
 
 export async function loadWorld(onProgress = () => {}) {
-  const [topo, wt, budgetBaselines] = await Promise.all([
+  const [topo, wt, budgetBaselines, demographics] = await Promise.all([
     fetch('/data/countries-50m.json').then((r) => r.json()),
     fetch('/data/watchtower.json').then((r) => r.json()).catch(() => ({ countries: {}, flags: [] })),
     fetch('/data/budget-baselines.json').then((r) => r.json()).catch(() => ({ countries: {} })),
+    fetch('/data/demographics.json').then((r) => r.json()).catch(() => ({ names: {}, countries: {} })),
   ]);
   onProgress('Tracing borders');
   const data = parseNations();
   const fc = feature(topo, topo.objects.countries);
   const nations = [null];
   const byKey = new Map();
+  const demographicsByName = new Map(Object.entries(demographics.names ?? {}).map(([iso, name]) => [name.toLowerCase(), demographics.countries?.[iso]]));
 
   for (const f of fc.features) {
     const fid = f.id ?? f.properties.name;
@@ -179,12 +181,16 @@ export async function loadWorld(onProgress = () => {}) {
     }
     if (!n.capital) n.capital = { ...n.label };
     n.inert = n.key === '010';
+    n.demographics = demographics.countries?.[n.iso3] ?? demographicsByName.get(n.name.toLowerCase()) ?? null;
 
     const w = wt.countries[n.iso3];
     if (w) {
       n.wt = w;
       if (w.gdpUsd) n.gdp = Math.round(w.gdpUsd / 1e8) / 10;
-      if (w.gdpUsd && w.gdpPerCapita) n.pop = Math.round((w.gdpUsd / w.gdpPerCapita) / 1e5) / 10;
+      if (w.gdpUsd && w.gdpPerCapita) {
+        const millions = w.gdpUsd / w.gdpPerCapita / 1e6;
+        n.pop = millions < .1 ? Math.max(.000001, Math.round(millions * 1e6) / 1e6) : Math.round(millions * 10) / 10;
+      }
       const m = w.military;
       if (m) {
         const inv = m.inventory;

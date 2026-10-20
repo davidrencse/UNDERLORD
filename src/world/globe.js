@@ -76,7 +76,11 @@ void main() {
   float rasterFade = smoothstep(0.012, 0.035, uAlt);
 
   // Map modes tint land by a per-nation value (lut.r) while keeping the relief legible.
-  if (uMode > 0.5 && own > 0.5 && rasterFade > 0.0) {
+  if (uMode > 6.5 && own > 0.5 && rasterFade > 0.0) {
+    bool buildable = abs(own - uPlayer) < 0.5 && abs(ctl - uPlayer) < 0.5;
+    vec3 tint = buildable ? vec3(0.72, 0.48, 0.2) : vec3(0.14, 0.18, 0.2);
+    land = mix(land, tint * mix(0.75, shade, 0.45), 0.72 * rasterFade);
+  } else if (uMode > 0.5 && own > 0.5 && rasterFade > 0.0) {
     vec3 tint = vec3(lo.r);
     if (lo.g > 0.9) tint = vec3(1.0, 0.71, 0.28) * (0.55 + lo.r * 0.45);
     else if (lo.g > 0.2 && lo.g < 0.45) tint = vec3(0.85, 0.22, 0.17) * (0.6 + lo.r * 0.4);

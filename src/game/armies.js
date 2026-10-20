@@ -117,8 +117,13 @@ export class Armies {
     const g = this.game;
     if (target === a.owner) return 'Pick a neighbouring country, not your own.';
     if (!g.nations[target] || g.nations[target].inert) return 'There is no border there.';
-    const segs = traceFront(this.world.control, MAP_W, MAP_H, centre, this._mine(a.owner), this._theirs(a.owner, target));
-    if (!segs.length) return `No border with ${g.nations[target].name} within 1,000 km of that point.`;
+    const mine = this._mine(a.owner), theirs = this._theirs(a.owner, target);
+    let segs = [];
+    for (const dLat of [9, 18, 36, 90]) {
+      segs = traceFront(this.world.control, MAP_W, MAP_H, centre, mine, theirs, { dLat });
+      if (segs.length) break;
+    }
+    if (!segs.length) return `No shared land border with ${g.nations[target].name}.`;
     a.front = { target, centre: { lat: centre.lat, lon: centre.lon }, segs };
     a.stance = 'front';
     a.plan = Math.min(a.plan, 0.2);

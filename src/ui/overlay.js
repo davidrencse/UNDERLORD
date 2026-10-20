@@ -90,14 +90,6 @@ export class Overlay {
       this.cityEls.push({ el, c, pos: ll2v(c.lat, c.lon, 1.0003), shown: false, x: NaN, y: NaN });
     }
 
-    this.cross = document.createElement('div');
-    this.cross.className = 'crosshair';
-    this.cross.innerHTML = '<div class="h"></div><div class="v"></div><div class="dot"></div><div class="title"><b></b><span></span></div>';
-    this.cross.style.display = 'none';
-    root.appendChild(this.cross);
-    this._crossShown = false;
-    this._crossX = NaN;
-    this._crossY = NaN;
   }
 
   _show(rec, on) { if (rec.shown !== on) { rec.shown = on; rec.el.style.display = on ? '' : 'none'; } }
@@ -154,7 +146,6 @@ export class Overlay {
     if (game.player != null) { this._plans(W, H); this._hubs(W, H); this._units(W, H); }
     this._battles(W, H);
     this._intel(W, H, cityLayer.labels);
-    this._crosshair(W, H);
   }
 
   // Relation of an owner to the player, cached per frame (game.allied walks every war).
@@ -357,7 +348,7 @@ export class Overlay {
     const { units, game, cam } = this.ctx;
     const A = units.armies, player = game.player, enemies = game.enemiesOf(player);
     const supplyMap = this.mode === 6;
-    const show = cam.dist < (supplyMap ? 1.4 : 0.42);
+    const show = cam.dist < (supplyMap || this.mode === 7 ? 1.4 : 0.42);
     const labels = cam.dist < (supplyMap ? 0.4 : 0.16);
     for (const h of A.hubs) {
       let rec = this.hubEls.get(h.id);
@@ -435,32 +426,4 @@ export class Overlay {
     }
   }
 
-  _setCross(on) { if (this._crossShown !== on) { this._crossShown = on; this.cross.style.display = on ? '' : 'none'; } }
-
-  // Positioned with transforms rather than left/top, so moving it never invalidates layout.
-  _crosshair(W, H) {
-    const { game } = this.ctx;
-    const n = this.selectedNation != null ? game.nations[this.selectedNation] : null;
-    if (!n || this.ctx.cam.dist < 0.05) { this._setCross(false); return; }
-    const pos = ll2v(n.label.lat, n.label.lon, 1.0005, p3);
-    const pr = this._facing(pos) && this._project(pos, W, H);
-    if (!pr || !pr.ok) { this._setCross(false); return; }
-    this._setCross(true);
-    const [h, vv, dot, title] = this.cross.children;
-    if (pr.x !== this._crossX || pr.y !== this._crossY) {
-      this._crossX = pr.x; this._crossY = pr.y;
-      // Snap to device pixels as layout did for the old left/top, keeping the 1px hairlines crisp.
-      const dpr = window.devicePixelRatio || 1;
-      const x = Math.round(pr.x * dpr) / dpr, y = Math.round(pr.y * dpr) / dpr;
-      h.style.transform = `translateY(${y}px)`;
-      vv.style.transform = `translateX(${x}px)`;
-      dot.style.transform = `translate(${x}px, ${y}px)`;
-      title.style.transform = `translate(${x}px, ${y}px) translate(-50%, -140%)`;
-    }
-    if (title._n !== n || title._leader !== n.leader || title._title !== n.title || title._name !== n.name) {
-      title._n = n; title._leader = n.leader; title._title = n.title; title._name = n.name;
-      title.children[0].textContent = n.name;
-      title.children[1].textContent = `${n.leader}${n.title ? `, ${n.title}` : ''}`;
-    }
-  }
 }

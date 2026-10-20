@@ -18,6 +18,8 @@ npm run dev        # http://localhost:5199
 | Wheel, R / F | Zoom (towards the cursor) |
 | Right-drag, Q / E | Rotate and tilt |
 | Click a nation | Open its panel |
+| Demographics in a nation panel or overview | Open that country's population and migration page |
+| Construction map mode (bottom bar) | Choose a building, then click owned, controlled land to queue it. Offices and office complexes must be placed in a marked city. Right-click or Esc exits. |
 | Click a counter, shift-click | Select formations |
 | Right-click a country | Open diplomatic decisions for that country |
 | Right-click with formations selected | Move them; on an enemy counter, attack it. Shift + right-click opens country decisions |

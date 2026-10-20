@@ -374,6 +374,7 @@ export class CityLayer {
     this.group.add(group);
     return {
       group, labels, procedural: [points, inst], materialize,
+      pedestrianGrid: { angle: theta, spacingM: sp * 1000, radiusM: Rk * 1600 },
       dispose: () => { geo.dispose(); boxGeo.dispose(); inst.dispose(); extra.forEach((g) => g.dispose()); },
     };
   }

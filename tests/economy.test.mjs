@@ -126,13 +126,31 @@ test('construction projects are paid from the infrastructure budget and add capa
   const fra = n('FRA');
   const cap0 = fra.econ.sectors.energy.cap;
   const self0 = fra.econ.comm.energy.self;
-  assert.equal(queueProject(fra, 'power'), null);
+  const site = { lat: 48.86, lon: 2.35 };
+  assert.equal(queueProject(fra, 'powerGenerator', site), null);
   const id = fra.econ.projects.at(-1).id;
-  months(game, Math.ceil(PROJECTS.power.days / 30) + 1);
+  assert.deepEqual(fra.econ.projects.at(-1).site, site);
+  months(game, Math.ceil(PROJECTS.powerGenerator.days / 30) + 1);
   assert.ok(!fra.econ.projects.some((p) => p.id === id), 'the project finished');
+  assert.deepEqual(fra.econ.completedSites.find((p) => p.id === id)?.site, site, 'finished site stays on the map');
   assert.ok(fra.econ.sectors.energy.cap > cap0 * 1.03, 'energy capacity rose');
   assert.ok(fra.econ.comm.energy.self > self0 * 1.03, 'self-sufficiency rose');
   assert.ok(COMMODITY_IDS.includes('energy'));
+});
+
+test('construction catalog includes the requested buildings and offices require a city', async () => {
+  const { n } = await fresh();
+  assert.deepEqual(Object.keys(PROJECTS), [
+    'militaryFactory', 'militaryComplex', 'civilianFactory', 'civilianComplex',
+    'offices', 'officeComplex', 'airports', 'infrastructure', 'powerGenerator',
+    'nuclearGenerator', 'dockyards', 'dockyardComplex', 'powerGrid',
+  ]);
+  const fra = n('FRA');
+  assert.match(queueProject(fra, 'offices', { lat: 46, lon: 2 }), /city/i);
+  assert.match(queueProject(fra, 'officeComplex'), /city/i);
+  assert.equal(queueProject(fra, 'offices', { lat: 48.9, lon: 2.3 }), null);
+  assert.equal(fra.econ.projects.at(-1).city, 'Paris');
+  assert.deepEqual(fra.econ.projects.at(-1).site, { lat: 48.86, lon: 2.35 });
 });
 
 test('tax rises raise revenue and cost political power once per cooldown', async () => {

@@ -10,6 +10,7 @@ export const MAP_MODES = [
   { id: 4, label: 'War support' },
   { id: 5, label: 'GDP per capita' },
   { id: 6, label: 'Supply' },
+  { id: 7, label: 'Construction' },
 ];
 
 export class Hud {
@@ -106,7 +107,7 @@ export class Hud {
       <div class="r"><span class="k">War support</span><span class="v">${n.warSupport.toFixed(0)}%</span>${meter(n.warSupport)}</div>
       <div class="r"><span class="k">GDP</span><span class="v ${n.growth >= 0 ? 'up' : 'down'}">${money(n.gdp)}<small>${signed(n.growth)}%</small></span></div>
       <div class="r"><span class="k">Manpower</span><span class="v">${compact(n.manpower * 1000)}</span></div>
-      <div class="r"><span class="k">Divisions</span><span class="v">${divs}</span></div>`);
+      <div class="r"><span class="k">Divisions</span><span class="v">${Math.round(divs * 10) / 10}</span></div>`);
   }
 
   _set(slot, el, html) { if (this._html[slot] !== html) { this._html[slot] = html; el.innerHTML = html; } }

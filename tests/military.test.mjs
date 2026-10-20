@@ -8,6 +8,8 @@ import { seedProduction, preferred, buildsOf, draw, drawClass, produceDay, addLi
 import { MODELS, MODEL, CLASSES } from '../src/data/equipment.js';
 import { INVENTORIES } from '../src/data/inventories.js';
 import { haversine } from '../src/util/geo.js';
+import { Armies } from '../src/game/armies.js';
+import { MAP_W, MAP_H } from '../src/world/geo.js';
 
 // A small equirectangular raster: 360 × 180, one pixel per degree.
 const W = 360, H = 180;
@@ -37,6 +39,22 @@ test('no contact, no front', () => {
   assert.deepEqual(traceFront(control, W, H, { lat: 50, lon: 9 }, lut(1), lut(3)), []);
   const win = windowAround({ lat: 50, lon: 9 }, 15, W, H);
   assert.equal(contactPixels(control, W, H, win, lut(1), lut(3)).length, 0);
+});
+
+test('front line finds a shared border when the enemy country is clicked inland', () => {
+  const control = new Uint8Array(MAP_W * MAP_H);
+  for (let y = 420; y < 550; y++) {
+    control.fill(1, y * MAP_W + 2050, y * MAP_W + 2160);
+    control.fill(2, y * MAP_W + 2160, y * MAP_W + 2500);
+  }
+  const game = { nations: [null, { name: 'Mine' }, { name: 'Theirs' }] };
+  const armies = {
+    game, world: { control }, _mine: () => lut(1), _theirs: () => lut(2), refresh: () => {},
+  };
+  const army = { owner: 1, front: null, stance: 'front', plan: 0 };
+  const centre = { lat: 50, lon: 35 };
+  assert.equal(Armies.prototype.setFront.call(armies, army, 2, centre), null);
+  assert.ok(army.front.segs.length > 0);
 });
 
 test('slots spread evenly along a line and formations keep their order along it', () => {

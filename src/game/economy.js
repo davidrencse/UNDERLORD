@@ -16,7 +16,9 @@
 // inflation, unemployment and policy rate. Every response function is a game estimate.
 
 import { ECONOMIES, EURO, PEGGED, MACRO, estimateEconomy } from '../data/economies.js';
-import { rng } from '../util/geo.js';
+import { CITIES } from '../data/places.js';
+import { rng, haversine } from '../util/geo.js';
+import { immigrationMonth } from './immigration.js';
 
 const clamp = (v, a, b) => Math.max(a, Math.min(b, v));
 const DAY = 86400000;
@@ -113,27 +115,32 @@ function lawMods(laws) {
 // gain: share of the sector's capacity added. Costs scale with the sector, so a project means the
 // same thing to a small economy and a large one.
 export const PROJECTS = {
-  industry: { name: 'Industrial complex', sector: 'manufacturing', gain: 0.02, days: 270, desc: '+2% manufacturing capacity' },
-  arms: { name: 'Arms plant', days: 180, desc: 'More military factories' },
-  power: { name: 'Power stations', sector: 'energy', gain: 0.04, days: 330, desc: '+4% energy output' },
-  mine: { name: 'Mines & smelters', sector: 'mining', gain: 0.05, days: 300, desc: '+5% metals output' },
-  fab: { name: 'Semiconductor fab', sector: 'technology', gain: 0.025, days: 450, desc: '+2.5% technology capacity' },
-  farms: { name: 'Farm modernisation', sector: 'agriculture', gain: 0.04, days: 240, desc: '+4% food output' },
-  corridor: { name: 'Transport corridor', all: 0.006, days: 360, desc: '+0.6% capacity in every sector' },
-  reserve: { name: 'Strategic reserve', days: 150, desc: '+1.5 months of energy, metals and food stockpiled' },
+  militaryFactory: { name: 'Military factory', factories: 1, days: 180, desc: '+1 military factory' },
+  militaryComplex: { name: 'Military complex', factories: 5, days: 420, desc: '+5 military factories' },
+  civilianFactory: { name: 'Civilian factory', sector: 'manufacturing', gain: 0.01, days: 180, desc: '+1% manufacturing capacity' },
+  civilianComplex: { name: 'Civilian complex', sector: 'manufacturing', gain: 0.05, days: 420, desc: '+5% manufacturing capacity' },
+  offices: { name: 'Offices', sector: 'services', gain: 0.01, days: 180, city: true, desc: '+1% services capacity · city only' },
+  officeComplex: { name: 'Office complex', sector: 'services', gain: 0.05, days: 420, city: true, desc: '+5% services capacity · city only' },
+  airports: { name: 'Airports', sector: 'services', gain: 0.004, all: 0.002, facilities: { airports: 1 }, days: 240, desc: 'Air transport · +0.2% capacity nationwide' },
+  infrastructure: { name: 'Infrastructure', all: 0.006, days: 240, desc: '+0.6% capacity nationwide' },
+  powerGenerator: { name: 'Power generator', sector: 'energy', gain: 0.04, days: 180, desc: '+4% energy output' },
+  nuclearGenerator: { name: 'Nuclear generator', sector: 'energy', gain: 0.1, days: 540, desc: '+10% energy output' },
+  dockyards: { name: 'Dockyards', sector: 'manufacturing', gain: 0.01, facilities: { dockyards: 1 }, days: 240, desc: '+1 dockyard · +1% manufacturing capacity' },
+  dockyardComplex: { name: 'Dockyard complex', sector: 'manufacturing', gain: 0.05, facilities: { dockyards: 5 }, days: 540, desc: '+5 dockyards · +5% manufacturing capacity' },
+  powerGrid: { name: 'Power grid', sector: 'energy', gain: 0.02, all: 0.002, days: 300, desc: '+2% energy output · +0.2% capacity nationwide' },
 };
 export const MAX_PROJECTS = 12;
 
 function projectSpec(E, kind) {
   const p = PROJECTS[kind];
-  if (kind === 'arms') {
-    const factories = Math.max(1, Math.round(E.milCap * 0.05));
-    return { factories, cost: factories * OUT_PER_FACTORY * SECTOR.defence.capOut };
+  if (p.factories) return { cost: p.factories * OUT_PER_FACTORY * SECTOR.defence.capOut };
+  let cost = 0;
+  if (p.sector) {
+    const s = E.sectors[p.sector];
+    cost += s.cap * p.gain * SECTOR[p.sector].va * SECTOR[p.sector].capOut;
   }
-  if (kind === 'corridor') return { cost: Object.values(E.sectors).reduce((t, s) => t + s.cap * SECTOR[s.id].va, 0) * p.all * 2.2 };
-  if (kind === 'reserve') return { cost: COMMODITY_IDS.reduce((t, c) => t + (E.comm[c].val * E.Ystar * 1.5) / 12, 0) };
-  const s = E.sectors[p.sector];
-  return { cost: s.cap * p.gain * SECTOR[p.sector].va * SECTOR[p.sector].capOut };
+  if (p.all) cost += Object.values(E.sectors).reduce((t, s) => t + (s.id === 'defence' ? 0 : s.cap * SECTOR[s.id].va), 0) * p.all * 2.2;
+  return { cost: Math.max(0.01, cost) };
 }
 
 // ------------------------------------------------------------------------------- creation
@@ -280,7 +287,7 @@ export function createEconomy(n, fx0 = {}) {
     rev0: rev, revPct: rev0, deficit: base.def, deficit0: base.def, interestPct: interest0, monetized: 0,
     ka0: null, ca0: null, restr0: 0, restr: 0, sanctionLoss: 0,
     milCap: milFunded * 1.08, milFunded, milUsed: milFunded, milFactories: Math.max(1, Math.min(MAX_FACTORIES, Math.round(milFunded))), milLimit: 'budget',
-    projects: [], nextProject: 1, aiTimer: 0, warMonths: 0, peaceMonths: 0,
+    projects: [], completedSites: [], facilities: { airports: 0, dockyards: 0 }, nextProject: 1, aiTimer: 0, warMonths: 0, peaceMonths: 0,
     hist: [], growth: g0, alerts: [], lawFx: { stab: 0, ws: 0, pp: 0 }, ruleBroken: false, devalued: false,
     inflParts: [], growthParts: [], months: 0, r: rng(9173 + n.index * 31),
     boosts: [], // timed effects from events: { kind, c, until, v }
@@ -411,11 +418,11 @@ function settle(g, n, soldiers) {
   const capFactor = occ >= 0 ? 1 - 0.85 * occ : Math.min(1.5, 1 - 0.6 * occ);
   E.occupied = Math.max(0, occ);
   E.lfIdx *= 1 + E.popG / 1200;
-  n.pop *= 1 + E.popG / 1200;
+  immigrationMonth(g, n, E.popG / 1200);
   if (soldiers != null && E.soldiers0 == null) E.soldiers0 = soldiers;
   E.mobilised = soldiers != null ? Math.max(0, soldiers - E.soldiers0) / 1e6 : 0;
   const part = 1 + 0.004 * (lv('health') - E.spend0.health) - 0.0015 * (E.tax.income - E.tax0.income);
-  E.LF = Math.max(0.005, E.LF0 * E.lfIdx * part * (1 - 0.8 * Math.max(0, occ)) - E.mobilised);
+  E.LF = Math.max(0.005, (E.LF0 * E.lfIdx * part + (n.immigration?.laborDelta ?? 0)) * (1 - 0.8 * Math.max(0, occ)) - E.mobilised);
 
   // ---- potential output
   for (const s of SECTORS) if (s.id !== 'defence') S[s.id].capEff = S[s.id].cap * capFactor;
@@ -427,7 +434,8 @@ function settle(g, n, soldiers) {
   const rReal = E.i - E.anchor;
   if (E.stab0 == null) E.stab0 = n.stability;
   const stabD = n.stability - E.stab0;
-  const otherSpend = n.budget.other ?? 0;
+  E.migrationSpend = n.immigration?.spending ?? 0;
+  const otherSpend = (n.budget.other ?? 0) + E.migrationSpend;
   const subsidyPct = (SECTORS.reduce((t, s) => t + S[s.id].sub * 0.04 * S[s.id].VA, 0) / Math.max(1e-6, E.Y)) * 100;
   const warOps = 1.5 * warD;
   const consPct = Object.keys(lines).filter((id) => !INVEST_LINES.includes(id) && !TRANSFER_LINES.includes(id) && !ABROAD_LINES.includes(id)).reduce((t, id) => t + lv(id), 0) + otherSpend + warOps;
@@ -452,7 +460,7 @@ function settle(g, n, soldiers) {
   const riskD = E.risk - E.risk0;
   const consMult = (1 - 0.005 * (rReal - E.rReal0)) * (1 + 0.0008 * stabD) * (1 + d('cons')) * (1 - 0.5 * (1 - E.comm.food.r)) * demandShift;
   const disp = (1 - hhTax / 100 + transPct / 100 + tot) / (1 - hhTax0 / 100 + sh.T);
-  const C = sh.C * B * disp * consMult;
+  const C = sh.C * B * disp * consMult * (n.immigration?.demandMultiplier ?? 1);
   const invMult = clamp(1 - 0.02 * (rReal - E.rReal0) - 0.012 * (t.corporate - t0.corporate) + 0.3 * E.gap + 0.001 * stabD + d('invPriv') - 0.15 * warD - 0.4 * restrD - 0.03 * riskD + boost('invest'), 0.3, 1.8) * demandShift;
   const Ip = sh.Ip * B * invMult;
   const Ig = (invPct / 100) * B;
@@ -529,7 +537,7 @@ function settle(g, n, soldiers) {
   if (S.defence.inMult < 0.995) { used *= S.defence.inMult; E.milLimit = 'inputs'; }
 
   // Labour: the jobs this output needs; a shortage caps every sector.
-  const lpStep = (E.gTrend - E.popG / 100 + (0.6 * dGrowth) / 100 + d('tfp') / 100) / 12;
+  const lpStep = (E.gTrend - E.popG / 100 + (0.6 * dGrowth) / 100 + d('tfp') / 100 + (n.immigration?.productivity ?? 0)) / 12;
   let Ld = 0;
   for (const s of SECTORS) {
     const x = S[s.id];
@@ -775,15 +783,16 @@ function runProjects(g, n, budget) {
 
 function completeProject(n, p) {
   const E = n.econ, def = PROJECTS[p.kind];
-  if (p.kind === 'arms') E.milCap += p.factories;
-  else if (p.kind === 'corridor') for (const s of SECTORS) { if (s.id !== 'defence') E.sectors[s.id].cap *= 1 + def.all; }
-  else if (p.kind === 'reserve') for (const c of COMMODITY_IDS) { E.comm[c].stock += 1.5; E.comm[c].stockCap += 1.5; }
-  else {
+  if (p.site) E.completedSites.push({ id: p.id, kind: p.kind, site: p.site });
+  if (def.factories) E.milCap += def.factories;
+  if (def.sector) {
     const x = E.sectors[def.sector];
     x.cap *= 1 + def.gain;
     // A commodity sector's new capacity raises self-sufficiency in the same proportion.
     for (const c of COMMODITY_IDS) if (COMMODITIES[c].sector === def.sector) E.comm[c].self *= 1 + def.gain;
   }
+  if (def.all) for (const s of SECTORS) if (s.id !== 'defence') E.sectors[s.id].cap *= 1 + def.all;
+  if (def.facilities) for (const [kind, count] of Object.entries(def.facilities)) E.facilities[kind] += count;
 }
 
 function aiEconomy(g, n, atWar) {
@@ -797,11 +806,10 @@ function aiEconomy(g, n, atWar) {
     E.laws.model = E.laws0.model;
   }
   if (n.gdp < 25 || E.projects.length >= 2 || E.r() > 0.3) return;
-  let kind = 'industry';
-  if ((atWar || n.warSupport > 60) && E.milFunded > E.milCap * 0.95) kind = 'arms';
-  else if (E.comm.energy.r < 0.99 || E.comm.energy.self < 0.5) kind = E.r() < 0.6 ? 'power' : 'reserve';
-  else if (E.comm.food.r < 0.99) kind = 'farms';
-  else { const pick = E.r(); kind = pick < 0.45 ? 'industry' : pick < 0.65 ? 'corridor' : pick < 0.8 ? 'fab' : pick < 0.9 ? 'mine' : 'power'; }
+  let kind = 'civilianFactory';
+  if ((atWar || n.warSupport > 60) && E.milFunded > E.milCap * 0.95) kind = 'militaryFactory';
+  else if (E.comm.energy.r < 0.99 || E.comm.energy.self < 0.5) kind = E.r() < 0.5 ? 'powerGenerator' : 'powerGrid';
+  else { const pick = E.r(); kind = pick < 0.5 ? 'civilianFactory' : pick < 0.7 ? 'infrastructure' : pick < 0.85 ? 'airports' : 'civilianComplex'; }
   queueProject(n, kind);
 }
 
@@ -824,11 +832,25 @@ function alerts(n) {
 // ------------------------------------------------------------------------------- player actions
 const isPlayer = (g, n) => n.index === g.player;
 
-export function queueProject(n, kind) {
+export function cityForProject(n, kind, site) {
+  if (!PROJECTS[kind]?.city || !site) return null;
+  let nearest = null, distance = 45;
+  for (const city of CITIES) {
+    if (city.iso3 !== n.iso3) continue;
+    const d = haversine(site, city);
+    if (d < distance) { nearest = city; distance = d; }
+  }
+  return nearest;
+}
+
+export function queueProject(n, kind, site = null) {
   const E = n.econ;
   if (!PROJECTS[kind]) return 'Unknown project.';
   if (E.projects.length >= MAX_PROJECTS) return `At most ${MAX_PROJECTS} projects.`;
-  E.projects.push({ id: E.nextProject++, kind, paid: 0, rate: 0, ...projectSpec(E, kind) });
+  const city = PROJECTS[kind].city ? cityForProject(n, kind, site) : null;
+  if (PROJECTS[kind].city && !city) return `${PROJECTS[kind].name} must be built in a city.`;
+  E.projects.push({ id: E.nextProject++, kind, paid: 0, rate: 0,
+    site: city ? { lat: city.lat, lon: city.lon } : site, city: city?.name ?? null, ...projectSpec(E, kind) });
   return null;
 }
 export const projectCost = (n, kind) => projectSpec(n.econ, kind).cost;

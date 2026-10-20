@@ -1,0 +1,48 @@
+.dem-doctrine { margin-top: 42px; padding-top: 32px; border-top: 1px solid var(--hair-strong); }
+.dem-doctrine-head { display: flex; justify-content: space-between; align-items: start; gap: 20px; }
+.dem-doctrine-head h2 { margin: 0; font: 600 34px/1.1 var(--display); text-transform: uppercase; }
+.dem-doctrine-head p { margin: 6px 0 0; color: var(--signal); }
+.dem-doctrine-head .btn { flex: none; }
+.dem-doctrine-note { max-width: 74ch; margin: 18px 0 22px; color: #b6bcc0; }
+.dem-doctrine-options { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 1px; background: var(--hair-strong); border: 1px solid var(--hair-strong); }
+.dem-doctrine-options button { min-height: 82px; padding: 14px 16px; background: var(--panel-solid); text-align: left; }
+.dem-doctrine-options button:hover, .dem-doctrine-options button[aria-pressed="true"] { background: #1b2023; }
+.dem-doctrine-options button[aria-pressed="true"] { box-shadow: inset 0 2px var(--signal); }
+.dem-doctrine-options strong { display: block; font: 600 20px/1 var(--display); text-transform: uppercase; }
+.dem-doctrine-options small { display: block; margin-top: 8px; color: #b6bcc0; font-size: 11px; }
+.dem-doctrine-summary { margin: 28px 0 22px; }
+.dem-doctrine-summary h3, .dem-conflict h3, .dem-origin h3 { margin: 0 0 8px; font: 600 26px/1.1 var(--display); text-transform: uppercase; }
+.dem-doctrine-summary p { max-width: 72ch; margin: 0; color: #b6bcc0; }
+.dem-doctrine-focuses { border-top: 1px solid var(--hair-strong); }
+.dem-doctrine-focuses article { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 8px 20px; padding: 16px 0; border-bottom: 1px solid var(--hair); }
+.dem-focus-link { text-align: left; font: 600 18px/1.15 var(--display); text-transform: uppercase; }
+.dem-focus-link:hover { color: var(--signal); }
+.dem-doctrine-focuses small { display: block; margin-top: 5px; color: #aeb5ba; font-size: 11px; }
+.dem-focus-status { color: var(--signal); font-size: 11px; text-align: right; }
+.dem-doctrine-focuses article p { grid-column: 1 / -1; max-width: 72ch; margin: 0; color: #b6bcc0; }
+.dem-focus-modifiers { grid-column: 1 / -1; display: flex; flex-wrap: wrap; gap: 6px 18px; }
+.dem-focus-modifiers span { color: #b6bcc0; font-size: 11px; }
+.dem-focus-modifiers b { margin-left: 4px; color: var(--ink); font-family: var(--mono); font-weight: 500; }
+.dem-doctrine-focuses article .btn { grid-column: 1 / -1; justify-self: start; }
+.dem-doctrine-focuses article .btn:disabled { opacity: .4; cursor: default; }
+.dem-doctrine > .btn { margin-top: 22px; }
+.dem-spec { max-height: 400px; overflow: auto; padding: 18px; margin: 12px 0 0; background: #0b0c0d; color: #c5cbd0; border: 1px solid var(--hair); font: 11px/1.6 var(--mono); }
+.dem-conflict, .dem-origin { margin-top: 34px; padding-top: 24px; border-top: 1px solid var(--hair-strong); }
+.dem-conflict dl, .dem-origin dl { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px 24px; margin: 18px 0 0; }
+.dem-conflict dl > div, .dem-origin dl > div { padding-top: 10px; border-top: 1px solid var(--hair); }
+.dem-conflict dt, .dem-origin dt { color: #b6bcc0; font-size: 11px; }
+.dem-conflict dd, .dem-origin dd { margin: 4px 0 0; font: 500 18px/1.25 var(--mono); overflow-wrap: anywhere; }
+.dem-conflict p, .dem-origin p { max-width: 72ch; color: #b6bcc0; }
+.dem-origin small { display: block; margin-top: 5px; color: #aeb5ba; font-size: 10px; }
+.dem-conflict ul { padding-left: 18px; color: #b6bcc0; }
+@media (max-width: 700px) {
+  .dem-doctrine-head { flex-wrap: wrap; }
+  .dem-doctrine-options { grid-template-columns: 1fr; }
+  .dem-doctrine-options button { min-height: 58px; }
+  .dem-conflict dl, .dem-origin dl { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+@media (max-width: 460px) {
+  .dem-doctrine-focuses article { grid-template-columns: 1fr; }
+  .dem-focus-status { text-align: left; }
+  .dem-conflict dl, .dem-origin dl { grid-template-columns: 1fr; }
+}

@@ -1,10 +1,15 @@
 import './style.css';
+import './ui/immigration.css';
+import './ui/demographicDoctrine.css';
 import * as THREE from 'three';
 import { loadWorld, pixelOf, meshNation } from './world/geo.js';
 import { Globe, sunDirection } from './world/globe.js';
 import { GlobeCamera } from './world/camera.js';
 import { CityLayer } from './world/cityLayer.js';
 import { OsmCity } from './world/osmCity.js';
+import { Civilians } from './world/civilians.js';
+import { StreetTraffic } from './world/streetTraffic.js';
+import { SupplyTraffic } from './world/supplyTraffic.js';
 import { ArmyLayer } from './world/armyLayer.js';
 import { Effects } from './world/effects.js';
 import { Game } from './game/game.js';
@@ -15,12 +20,14 @@ import { Hud } from './ui/hud.js';
 import { CountryPanel, UnitPanel } from './ui/panels.js';
 import { DiplomacyMenu } from './ui/diplomacyMenu.js';
 import { DossierScreen, FocusScreen, EventModal, StartScreen } from './ui/screens.js';
+import { DemographicsScreen } from './ui/demographicsScreen.js';
 import { EconomyScreen } from './ui/economyScreen.js';
 import { ArmyBar } from './ui/armyBar.js';
 import { SupplyScreen } from './ui/supplyScreen.js';
 import { DesignerScreen } from './ui/designerScreen.js';
 import { ProductionScreen } from './ui/productionScreen.js';
 import { ResearchScreen } from './ui/researchScreen.js';
+import { ConstructionMap } from './ui/constructionMap.js';
 import { TECH } from './game/research.js';
 import { ll2v, interpolate, haversine, destination } from './util/geo.js';
 
@@ -51,6 +58,9 @@ const game = new Game(world);
 const units = new Units(game, world);
 const cityLayer = new CityLayer(scene, world, game);
 const osm = new OsmCity(scene);
+const civilians = new Civilians(scene, osm, cityLayer);
+const streetTraffic = new StreetTraffic(scene, osm, cityLayer);
+const supplyTraffic = new SupplyTraffic(scene, game, units);
 const army = new ArmyLayer(scene, game, units, osm);
 const effects = new Effects(scene, game, units, osm);
 const cam = new GlobeCamera(camera, canvas);
@@ -76,13 +86,16 @@ const ctx = {
   game, world, units, cam, camera, cityLayer,
   selectedNation: () => selectedNation,
   selectNation, selectUnits, setMode,
-  openDossier: (i) => { if (i != null) { focus.close(); economy.close(); closeMilitary(); dossier.open(i); } },
-  openFocus: () => { if (game.player != null) { dossier.close(); economy.close(); closeMilitary(); focus.open(); } },
+  openDossier: (i) => { if (i != null) { demographics.close(); focus.close(); economy.close(); closeMilitary(); dossier.open(i); } },
+  openDemographics: (i) => { if (i != null) { dossier.close(); focus.close(); economy.close(); closeMilitary(); demographics.open(i); } },
+  openFocus: (category, selected) => { if (game.player != null) { dossier.close(); demographics.close(); economy.close(); closeMilitary(); focus.open(category, selected); } },
   openLedger: () => openEconomy('budget'),
   openEconomy: (tab, toggle) => openEconomy(tab, toggle),
+  openConstruction: (kind) => { construction.kind = kind; setMode(7); },
   openMilitary,
   toast: (t) => hud.toast(t),
   refreshTop: () => hud.renderTop(),
+  refreshScreens: () => flushDayUI(),
   refreshClock: () => hud.renderClock(),
   escape,
   onUnitClick: (s, add, members) => {
@@ -102,13 +115,14 @@ const ctx = {
 };
 
 const overlay = new Overlay(document.getElementById('overlay'), ctx);
+const construction = new ConstructionMap(ui, document.getElementById('overlay'), ctx);
 const selectionBox = document.createElement('div');
 selectionBox.className = 'selection-box';
 selectionBox.hidden = true;
 document.getElementById('overlay').appendChild(selectionBox);
 const selectPos = new THREE.Vector3();
 cam.onSelectDrag = (x0, y0, x1, y1) => {
-  if (x0 == null || start.active) { selectionBox.hidden = true; return; }
+  if (x0 == null || start.active || mode === 7) { selectionBox.hidden = true; return; }
   selectionBox.hidden = false;
   selectionBox.style.left = `${Math.min(x0, x1)}px`;
   selectionBox.style.top = `${Math.min(y0, y1)}px`;
@@ -117,7 +131,7 @@ cam.onSelectDrag = (x0, y0, x1, y1) => {
 };
 cam.onSelectEnd = (x0, y0, x1, y1, add) => {
   selectionBox.hidden = true;
-  if (start.active || game.player == null) return;
+  if (start.active || game.player == null || mode === 7) return;
   const left = Math.min(x0, x1), right = Math.max(x0, x1);
   const top = Math.min(y0, y1), bottom = Math.max(y0, y1);
   const picked = [];
@@ -138,6 +152,7 @@ const countryPanel = new CountryPanel(ui, ctx);
 const diplomacyMenu = new DiplomacyMenu(ui, { ...ctx, countryPanel });
 const unitPanel = new UnitPanel(ui, ctx);
 const dossier = new DossierScreen(ui, ctx);
+const demographics = new DemographicsScreen(ui, ctx);
 const focus = new FocusScreen(ui, ctx);
 const economy = new EconomyScreen(ui, ctx);
 const events = new EventModal(ui, ctx);
@@ -155,7 +170,7 @@ function openMilitary(tab = milTab, toggle = false) {
   if (game.player == null) return;
   const screen = military[tab];
   if (toggle && !screen.el.hidden) { screen.close(); return; }
-  dossier.close(); focus.close(); economy.close();
+  dossier.close(); demographics.close(); focus.close(); economy.close();
   for (const [k, s] of Object.entries(military)) if (k !== tab) s.close();
   milTab = tab;
   screen.open();
@@ -163,7 +178,7 @@ function openMilitary(tab = milTab, toggle = false) {
 // The economy screen's tabs: Overview (E), Budget (L), Construction, Industry, Trade, Finance, Laws.
 function openEconomy(tab, toggle = false) {
   if (game.player == null) return;
-  dossier.close(); focus.close(); closeMilitary();
+  dossier.close(); demographics.close(); focus.close(); closeMilitary();
   economy.open(tab, toggle);
 }
 function closeMilitary() { for (const s of Object.values(military)) s.close(); }
@@ -196,7 +211,17 @@ function rebuildLUT() {
   globe.refreshLUT();
 }
 // Supply (6) keeps the terrain globe and draws hub reach and supply routes over it.
-function setMode(m) { diplomacyMenu.close(); mode = m; globe.uniforms.uMode.value = m === 6 ? 0 : m; overlay.mode = m; hud.setMode(m); rebuildLUT(); }
+function setMode(m) {
+  diplomacyMenu.close();
+  if (m === 7) { setTool(null); dossier.close(); demographics.close(); focus.close(); economy.close(); closeMilitary(); countryPanel.close(); construction.open(); }
+  else construction.close();
+  mode = m;
+  globe.uniforms.uMode.value = m === 6 ? 0 : m;
+  overlay.mode = m;
+  hud.setMode(m);
+  document.body.classList.toggle('construction-mode', m === 7);
+  rebuildLUT();
+}
 
 // ------------------------------------------------------------------ selection
 function selectNation(i, fly = false) {
@@ -234,7 +259,6 @@ function setActiveArmy(id) {
 function setTool(t) {
   tool = t;
   toolHover = null;
-  document.body.classList.toggle('tool-on', !!t);
   armyBar.render();
 }
 
@@ -250,7 +274,10 @@ function toolClick(ll) {
     hud.renderTop();
   } else if (tool.kind === 'front') {
     if (!a) { setTool(null); return; }
-    const why = A.setFront(a, world.control[pixelOf(ll.lat, ll.lon)], ll);
+    const pixel = pixelOf(ll.lat, ll.lon);
+    const controller = world.control[pixel], owner = world.owner[pixel];
+    const target = controller === a.owner ? owner : controller || owner;
+    const why = A.setFront(a, target, ll);
     if (why) { hud.toast(why); return; }
     setTool(null);
     hud.toast(`${a.name} is deploying along the front.`);
@@ -287,9 +314,11 @@ function orderSelected(dest) {
 }
 
 function escape() {
-  if (tool) setTool(null);
+  if (mode === 7) setMode(0);
+  else if (tool) setTool(null);
   else if (!diplomacyMenu.el.hidden) diplomacyMenu.close();
   else if (!dossier.el.hidden) dossier.close();
+  else if (!demographics.el.hidden) demographics.close();
   else if (!focus.el.hidden) focus.close();
   else if (!economy.el.hidden) economy.close();
   else if (Object.values(military).some((s) => !s.el.hidden)) closeMilitary();
@@ -303,6 +332,7 @@ cam.onClick = (e) => {
   const ll = cam.pick(e.clientX, e.clientY);
   const i = nationAt(ll);
   if (start.active) { if (i) start.choose(i); return; }
+  if (mode === 7) { construction.place(ll); return; }
   if (tool) { toolClick(ll); return; }
   if (!e.shiftKey) selectUnits([]);
   if (i && !game.nations[i].inert) selectNation(i);
@@ -310,6 +340,7 @@ cam.onClick = (e) => {
 cam.onRightClick = (e) => {
   const ll = cam.pick(e.clientX, e.clientY);
   if (!ll || start.active) return;
+  if (mode === 7) { setMode(0); return; }
   if (tool) { if (tool.pts?.length) finishTool(); else setTool(null); return; }
   if (selectedUnits.some((s) => s.owner === game.player) && !e.shiftKey) { diplomacyMenu.close(); orderSelected(ll); return; }
   const i = nationAt(ll);
@@ -325,6 +356,7 @@ function processHover() {
   if (!e) return;
   hoverPending = null;
   const ll = cam.pick(e.clientX, e.clientY);
+  if (mode === 7) construction.setHover(ll, e.clientX, e.clientY);
   const i = nationAt(ll);
   if (tool) toolHover = ll;
   globe.uniforms.uHover.value = i || -1;
@@ -369,6 +401,8 @@ function flushDayUI() {
   dayUIQueued = false;
   if (game.player == null) return;
   hud.renderTop(); countryPanel.render(); focus.render(); economy.render(); supply.render(); production.render(); research.render();
+  construction.render();
+  demographics.render();
 }
 game.on('day', () => {
   if (mode) rebuildLUT();
@@ -476,11 +510,15 @@ function frame(now) {
   processHover();
   globe.update(camera, cam.dist, sunDirection(game.date, sun));
   osm.update(cam, vh);
+  cityLayer.update(cam, vh, osm.active && osm.visibleBuildings() > 0);
+  civilians.update(cam, now / 1000);
+  streetTraffic.update(cam, now / 1000);
+  supplyTraffic.update(cam, now / 1000);
   army.update(cam, now / 1000);
   effects.update(cam, camera, now / 1000);
-  cityLayer.update(cam, vh, osm.ready);
   if (attrib.hidden !== !osm.active) attrib.hidden = !osm.active;
   overlay.update();
+  construction.update();
   updatePaths();
 
   texTimer += dt;
@@ -501,4 +539,4 @@ function frame(now) {
 requestAnimationFrame(frame);
 
 // Debug handle for the browser console.
-window.underlord = { game, units, world, cam, globe, osm, army, effects, play: (iso) => { start.el.hidden = true; begin(world.byIso.get(iso).index); } };
+window.underlord = { game, units, world, cam, globe, osm, civilians, streetTraffic, supplyTraffic, army, effects, play: (iso) => { start.el.hidden = true; begin(world.byIso.get(iso).index); } };

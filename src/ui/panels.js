@@ -60,7 +60,7 @@ export class CountryPanel {
   close() { this.el.hidden = true; this.nation = null; this.ctx.onPanelClose?.(); }
 
   _click(e) {
-    const b = e.target.closest('[data-tab],[data-close],[data-dec],[data-dip],[data-loc],[data-open],[data-pick],[data-nation]');
+    const b = e.target.closest('[data-tab],[data-close],[data-dec],[data-dip],[data-loc],[data-open],[data-demographics],[data-pick],[data-nation]');
     if (!b) return;
     const { game, units } = this.ctx;
     const n = game.nations[this.nation];
@@ -79,6 +79,7 @@ export class CountryPanel {
       const s = units.byId.get(+b.dataset.loc);
       if (s) { this.ctx.selectUnits([s]); this.ctx.cam.flyTo(s.lat, s.lon, Math.min(this.ctx.cam.goal.dist, 0.25)); }
     } else if (b.dataset.open) this.ctx.openDossier(this.nation);
+    else if (b.dataset.demographics !== undefined) this.ctx.openDemographics(this.nation);
     else if (b.dataset.pick !== undefined) this.ctx.openFocus();
     else if (b.dataset.nation) this.ctx.selectNation(+b.dataset.nation, true);
   }
@@ -94,6 +95,7 @@ export class CountryPanel {
         <button class="close" data-close aria-label="Close">✕</button>
         <div class="row">${flagHTML(n)}<div><h2>${esc(n.name)}</h2><div class="sub">${esc(n.leader)}${n.title ? `, ${esc(n.title)}` : ''}</div></div></div>
         <div class="tabs" role="tablist">${tabs.map(([id, l]) => `<button data-tab="${id}" class="${this.tab === id ? 'on' : ''}" role="tab">${l}</button>`).join('')}</div>
+        <button class="demographics-entry" data-demographics>Demographics <span>View population profile</span></button>
       </div>
       <div class="pb">${this[`_${this.tab}`](n, own)}</div>`;
     // Most daily ticks change nothing on the open tab; skip the rebuild (and its forced layout).
